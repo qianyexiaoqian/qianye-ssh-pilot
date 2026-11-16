@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, FolderOpen, LoaderCircle, Minus, Plus, RefreshCw, Search, SquareTerminal, X, Zap } from "lucide-react";
+import { Bot, FolderOpen, LoaderCircle, Minus, Plus, RefreshCw, Route, Search, SquareTerminal, X, Zap } from "lucide-react";
 import { api } from "../lib/api";
 import { cn } from "../lib/format";
 import { useOpsAgent } from "../lib/agent";
@@ -173,9 +173,14 @@ export default function Terminals() {
         </div>
         <div className="flex shrink-0 items-center gap-0.5 pl-1">
           {active?.state === "closed" && (
-            <Button size="sm" variant="soft" icon={RefreshCw} onClick={() => reconnectTab(active.key)} title="重新连接">
-              {label("重新连接")}
-            </Button>
+            <>
+              <Button size="sm" variant="soft" icon={RefreshCw} onClick={() => reconnectTab(active.key)} title="重新连接">
+                {label("重新连接")}
+              </Button>
+              <Button size="sm" variant="ghost" icon={Route} onClick={() => useApp.getState().openRoute(active.serverId)} title="直连不通时，换一条线路连接：经跳板机，或经本地 / HTTP / SOCKS5 代理">
+                {label("换线路")}
+              </Button>
+            </>
           )}
           <Button size="sm" variant="ghost" icon={FolderOpen} onClick={() => active && void openFilesWindow(active.serverId)} title="在独立窗口里打开这台服务器的文件管理（上传、下载、在线编辑，支持拖拽上传）">
             {label("文件")}

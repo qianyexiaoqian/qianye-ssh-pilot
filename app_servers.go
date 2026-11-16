@@ -14,22 +14,26 @@ import (
 )
 
 type ServerInput struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Host              string   `json:"host"`
-	Port              int      `json:"port"`
-	Username          string   `json:"username"`
-	AuthType          string   `json:"authType"`
-	KeyID             string   `json:"keyId"`
-	Password          string   `json:"password"`
-	ClearPassword     bool     `json:"clearPassword"`
-	Group             string   `json:"group"`
-	Tags              []string `json:"tags"`
-	JumpServerID      string   `json:"jumpServerId"`
-	UseSudo           bool     `json:"useSudo"`
-	SudoPassword      string   `json:"sudoPassword"`
-	ClearSudoPassword bool     `json:"clearSudoPassword"`
-	Notes             string   `json:"notes"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Host          string   `json:"host"`
+	Port          int      `json:"port"`
+	Username      string   `json:"username"`
+	AuthType      string   `json:"authType"`
+	KeyID         string   `json:"keyId"`
+	Password      string   `json:"password"`
+	ClearPassword bool     `json:"clearPassword"`
+	Group         string   `json:"group"`
+	Tags          []string `json:"tags"`
+	JumpServerID  string   `json:"jumpServerId"`
+	// Proxy.Type 不为空表示经代理连接（与跳板机二选一，填了跳板机时忽略）。
+	Proxy             ProxyInput `json:"proxy"`
+	UseSudo           bool       `json:"useSudo"`
+	SudoPassword      string     `json:"sudoPassword"`
+	ClearSudoPassword bool       `json:"clearSudoPassword"`
+	Notes             string     `json:"notes"`
+	// OS 是保存前「测试连接」时识别出的系统名称（地址没有再改动时由界面带上），省得保存后还要再连一次。
+	OS string `json:"os"`
 }
 
 func (in *ServerInput) normalize() error {
@@ -85,15 +89,25 @@ func (a *App) SaveServer(in ServerInput) (store.Server, error) {
 	if err := in.normalize(); err != nil {
 		return store.Server{}, err
 	}
+	var proxy *store.ProxyConfig
+	switch {
+	case in.JumpServerID != "":
+		if err := a.checkJump(in.ID, in.JumpServerID); err != nil {
+			return store.Server{}, err
+		}
+	case in.Proxy.Type != "":
+		p, err := normalizeProxy(in.Proxy, a.savedProxies(in.ID)...)
+		if err != nil {
+			return store.Server{}, err
+		}
+		proxy = p
+	}
 	var saved store.Server
 	err := a.store.Update(func(d *store.Data) error {
 		if in.AuthType == "key" {
 			if d.Key(in.KeyID) == nil {
 				return errors.New("请选择用于登录的私钥（可在「密钥」页导入或生成）")
 			}
-		}
-		if in.JumpServerID != "" && d.Server(in.JumpServerID) == nil {
-			return errors.New("跳板机不存在")
 		}
 		now := store.Now()
 		s := d.Server(in.ID)
@@ -105,10 +119,19 @@ func (a *App) SaveServer(in ServerInput) (store.Server, error) {
 			d.Servers = append(d.Servers, s)
 		} else if s.Host != in.Host || s.Port != in.Port {
 			s.HostKey, s.HostKeyFP = "", "" // 地址变化后重新学习主机密钥
+			s.OS = ""
+		}
+		if in.OS != "" {
+			s.OS = in.OS
 		}
 		s.Name, s.Host, s.Port, s.Username = in.Name, in.Host, in.Port, in.Username
 		s.AuthType, s.KeyID, s.Group, s.Tags = in.AuthType, in.KeyID, in.Group, in.Tags
 		s.JumpServerID, s.UseSudo, s.Notes = in.JumpServerID, in.UseSudo, in.Notes
+		s.Proxy = proxy
+		if proxy != nil {
+			cp := *proxy
+			d.Settings.General.LastProxy = &cp
+		}
 		if in.AuthType != "key" {
 			s.KeyID = ""
 		}
@@ -137,8 +160,87 @@ func (a *App) SaveServer(in ServerInput) (store.Server, error) {
 	a.pool.Invalidate(saved.ID)
 	a.forgetOwners(saved.ID)
 	a.monitor.unblock(saved.ID)
+	a.forgetOSAttempt(saved.ID)
 	a.RefreshStatus()
 	return a.serverView(saved), nil
+}
+
+// ServerSecrets 是一台服务器保存的密码（明文），只在界面要显示或复制时读取。
+type ServerSecrets struct {
+	Password      string `json:"password"`
+	SudoPassword  string `json:"sudoPassword"`
+	ProxyPassword string `json:"proxyPassword"`
+}
+
+// GetServerSecrets 返回一台服务器保存的登录密码、sudo 密码和代理密码，供界面显示和复制。
+func (a *App) GetServerSecrets(id string) (ServerSecrets, error) {
+	if err := a.guard(); err != nil {
+		return ServerSecrets{}, err
+	}
+	var out ServerSecrets
+	found := false
+	a.store.Read(func(d *store.Data) {
+		if s := d.Server(id); s != nil {
+			found = true
+			out.Password, out.SudoPassword = s.Password, s.SudoPassword
+			if s.Proxy != nil {
+				out.ProxyPassword = s.Proxy.Password
+			}
+		}
+	})
+	if !found {
+		return out, errors.New("服务器不存在或已删除")
+	}
+	return out, nil
+}
+
+// ---- 系统识别 ----
+
+func (a *App) setServerOS(id, name string) {
+	changed := false
+	a.store.Read(func(d *store.Data) {
+		if s := d.Server(id); s != nil {
+			changed = s.OS != name
+		}
+	})
+	if !changed {
+		return
+	}
+	_ = a.store.Update(func(d *store.Data) error {
+		if s := d.Server(id); s != nil {
+			s.OS = name
+		}
+		return nil
+	})
+	a.emit("servers:changed")
+}
+
+// learnOS 在新建立的连接上识别系统名称。任何方式连上服务器（终端、文件管理、执行命令、监控）都会走到这里；
+// 每台服务器每次运行只识别一次，系统升级后重启程序即可刷新。程序不会为了识别系统主动去登录没有连接过的服务器。
+func (a *App) learnOS(id string, c *sshx.Client) {
+	a.osMu.Lock()
+	if a.osSeen[id] {
+		a.osMu.Unlock()
+		return
+	}
+	a.osSeen[id] = true
+	a.osMu.Unlock()
+	name := sshx.DetectOS(c, 10*time.Second)
+	if name == "" {
+		// 这次没有识别出来（例如连接马上被关闭了），下次连接时再试
+		a.osMu.Lock()
+		delete(a.osSeen, id)
+		a.osMu.Unlock()
+		return
+	}
+	a.setServerOS(id, name)
+}
+
+// forgetOSAttempt 在服务器的地址、凭据或线路变化后调用：允许重新识别系统。
+func (a *App) forgetOSAttempt(id string) {
+	a.osMu.Lock()
+	delete(a.osSeen, id)
+	a.osMu.Unlock()
 }
 
 func (a *App) DeleteServer(id string) error {
@@ -159,6 +261,7 @@ func (a *App) DeleteServer(id string) error {
 	a.pool.Invalidate(id)
 	a.forgetOwners(id)
 	a.monitor.forget(id)
+	a.dropRoutesVia(id)
 	return err
 }
 
@@ -195,8 +298,6 @@ type TestResult struct {
 	SudoChecked bool   `json:"sudoChecked"`
 }
 
-const osProbe = `. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$NAME}" || uname -sr`
-
 func (a *App) runTest(ep *sshx.Endpoint, persist bool) TestResult {
 	var learned string
 	learn := func(serverID, key, fp string) {
@@ -215,12 +316,7 @@ func (a *App) runTest(ep *sshx.Endpoint, persist bool) TestResult {
 	}
 	defer cl.Close()
 	res := TestResult{OK: true, LatencyMs: time.Since(start).Milliseconds(), HostKeyFP: learned, HostKeyNew: learned != ""}
-	if s, err := cl.NewSession(); err == nil {
-		if out, err := s.Output(osProbe); err == nil {
-			res.OS = strings.TrimSpace(string(out))
-		}
-		s.Close()
-	}
+	res.OS = sshx.DetectOS(cl, 10*time.Second)
 	if ep.UseSudo && !ep.IsRoot() {
 		res.SudoChecked = true
 		if s, err := cl.NewSession(); err == nil {
@@ -252,12 +348,7 @@ func (a *App) TestServer(id string) TestResult {
 	}
 	res := a.runTest(ep, true)
 	if res.OK && res.OS != "" {
-		_ = a.store.Update(func(d *store.Data) error {
-			if s := d.Server(id); s != nil {
-				s.OS = res.OS
-			}
-			return nil
-		})
+		a.setServerOS(id, res.OS)
 	}
 	a.pool.Invalidate(id)
 	if res.OK {
@@ -302,12 +393,22 @@ func (a *App) TestServerInput(in ServerInput) TestResult {
 	if in.AuthType == "password" && ep.Password == "" {
 		return TestResult{Message: "请填写登录密码"}
 	}
-	if in.JumpServerID != "" {
+	switch {
+	case in.JumpServerID != "":
+		if err := a.checkJump(in.ID, in.JumpServerID); err != nil {
+			return TestResult{Message: err.Error()}
+		}
 		j, err := a.resolveEndpoint(in.JumpServerID)
 		if err != nil {
 			return TestResult{Message: err.Error()}
 		}
 		ep.Jump = j
+	case in.Proxy.Type != "":
+		p, err := normalizeProxy(in.Proxy, a.savedProxies(in.ID)...)
+		if err != nil {
+			return TestResult{Message: err.Error()}
+		}
+		ep.Proxy = dialProxy(p)
 	}
 	return a.runTest(ep, false)
 }
@@ -334,12 +435,7 @@ func (a *App) GetServerInfo(id string) (*ops.ServerInfo, error) {
 		return nil, err
 	}
 	if info.OS != "" {
-		_ = a.store.Update(func(d *store.Data) error {
-			if s := d.Server(id); s != nil && s.OS != info.OS {
-				s.OS = info.OS
-			}
-			return nil
-		})
+		a.setServerOS(id, info.OS)
 	}
 	return info, nil
 }
@@ -347,15 +443,27 @@ func (a *App) GetServerInfo(id string) (*ops.ServerInfo, error) {
 // ---- 终端 ----
 
 func (a *App) OpenTerminal(serverID string, cols, rows int) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return a.terms.Open(ctx, serverID, cols, rows)
+	id, err := a.terms.Open(ctx, serverID, cols, rows)
+	if err == nil {
+		a.routeUsed(serverID)
+	}
+	return id, err
 }
 
 // TerminalReady 在前端订阅输出事件后调用，此后缓存的输出才会推送。
 func (a *App) TerminalReady(id string) { a.terms.Ready(id) }
 
-func (a *App) TerminalWrite(id, data string) error { return a.terms.Write(id, data) }
+func (a *App) TerminalWrite(id, data string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	return a.terms.Write(id, data)
+}
 
 func (a *App) TerminalResize(id string, cols, rows int) error { return a.terms.Resize(id, cols, rows) }
 

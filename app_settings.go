@@ -142,6 +142,9 @@ func normalizeHotkey(s, def string) string {
 
 // ExportBackup 把全部数据（含解密后的密钥、记忆与技能）用口令加密导出。
 func (a *App) ExportBackup(password string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	data, err := a.store.Snapshot()
 	if err != nil {
 		return "", err
@@ -175,6 +178,9 @@ func (a *App) ExportBackup(password string) (string, error) {
 
 // ImportBackup 从加密备份恢复数据（覆盖当前数据）。
 func (a *App) ImportBackup(password string) (bool, error) {
+	if err := a.guard(); err != nil {
+		return false, err
+	}
 	opts := runtime.OpenDialogOptions{
 		Title:   "选择备份文件",
 		Filters: []runtime.FileFilter{{DisplayName: ProductName + " 备份 (*.spbak)", Pattern: "*.spbak"}},

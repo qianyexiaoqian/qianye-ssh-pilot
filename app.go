@@ -23,7 +23,7 @@ import (
 	"sshpilot/internal/store"
 )
 
-const AppVersion = "1.4.0"
+const AppVersion = "1.5.0"
 
 type ServerStatus struct {
 	Status    string `json:"status"` // online | offline | unknown
@@ -72,6 +72,18 @@ type App struct {
 	forceQuit   atomic.Bool
 	winMu       sync.Mutex
 	fileWins    []*fileWindow
+
+	// 启动密码：uiLocked 表示界面被锁住（见 app_lock.go）；bgOnce 保证后台任务只启动一次。
+	uiLocked atomic.Bool
+	bgOnce   sync.Once
+
+	// 临时线路（见 app_route.go）
+	routeMu    sync.Mutex
+	tempRoutes map[string]*route
+
+	// 系统识别：osSeen 记录这次运行里已经识别过系统的服务器
+	osMu   sync.Mutex
+	osSeen map[string]bool
 }
 
 func NewApp() *App {
@@ -81,6 +93,8 @@ func NewApp() *App {
 		probeNow:   make(chan struct{}, 1),
 		owners:     map[string]*ownerNames{},
 		xfers:      &transferHub{},
+		tempRoutes: map[string]*route{},
+		osSeen:     map[string]bool{},
 	}
 }
 
@@ -95,6 +109,9 @@ func (a *App) startup(ctx context.Context) {
 			st, _ = store.OpenReadOnly(filepath.Join(os.TempDir(), "SSHPilot-empty"))
 		}
 		a.wire(st)
+		// 主窗口已经解锁：沿用它的数据密钥和这台服务器的临时线路
+		a.unlockFromParent()
+		a.adoptParentRoute()
 		a.startFilesWindow()
 		a.startQA()
 		return
@@ -111,12 +128,23 @@ func (a *App) startup(ctx context.Context) {
 	a.wire(st)
 	a.loadLastReport()
 	go a.statusLoop()
-	go a.autoSyncLoop()
-	go a.autoInspectLoop()
-	// 长期记忆：补上历史对话的要点、建立向量索引；并定期整理技能库
-	a.agent.StartIndexing()
-	go a.curateLoop()
+	go a.idleLockLoop()
+	// 设置了启动密码时，凭据要等输入密码后才能解密：后台任务推迟到解锁之后（见 afterUnlock）
+	if !st.Locked() {
+		a.startBackground()
+	}
 	a.startQA()
+}
+
+// startBackground 启动需要用到凭据的后台任务，只执行一次。
+func (a *App) startBackground() {
+	a.bgOnce.Do(func() {
+		go a.autoSyncLoop()
+		go a.autoInspectLoop()
+		// 长期记忆：补上历史对话的要点、建立向量索引；并定期整理技能库
+		a.agent.StartIndexing()
+		go a.curateLoop()
+	})
 }
 
 // curateLoop 定期归档长期没有用到的 AI 沉淀技能。
@@ -132,7 +160,9 @@ func (a *App) curateLoop() {
 func (a *App) wire(st *store.Store) {
 	a.store = st
 	a.pool = sshx.NewPool(a.resolveEndpoint, a.learnHostKey)
+	a.pool.OnConnect = func(serverID string, c *sshx.Client) { go a.learnOS(serverID, c) }
 	a.terms = sshx.NewTerminalManager(a.pool, a.emit)
+	a.terms.OnClose = a.routeUseEnded
 	a.monitor = newMonitorHub(a)
 	a.agent = agent.New(agent.Config{
 		DataDir:     a.dataDir,
@@ -202,15 +232,22 @@ func (a *App) commandTimeout() time.Duration {
 
 // ---- 连接 ----
 
-func (a *App) resolveEndpoint(id string) (*sshx.Endpoint, error) { return a.endpoint(id, 0) }
+func (a *App) resolveEndpoint(id string) (*sshx.Endpoint, error) { return a.endpointVia(id, 0, nil) }
 
-func (a *App) endpoint(id string, depth int) (*sshx.Endpoint, error) {
+// endpointVia 构造连接一台服务器所需的全部信息。via 不为空时用它代替这台服务器的线路
+// （测试一条还没有生效的线路时使用），否则先看临时线路，再看服务器保存的跳板机或代理。
+func (a *App) endpointVia(id string, depth int, via *route) (*sshx.Endpoint, error) {
 	if depth > 3 {
 		return nil, errors.New("跳板机层级过深或存在循环引用")
+	}
+	// 还没有输入启动密码时凭据是密文，不能拿去登录
+	if a.store.Locked() {
+		return nil, store.ErrLocked
 	}
 	var (
 		ep     *sshx.Endpoint
 		jumpID string
+		proxy  *store.ProxyConfig
 		err    error
 	)
 	a.store.Read(func(d *store.Data) {
@@ -231,17 +268,34 @@ func (a *App) endpoint(id string, depth int) (*sshx.Endpoint, error) {
 			}
 			ep.PrivateKey, ep.Passphrase = k.PrivatePEM, k.Passphrase
 		}
+		if store.Sealed(ep.Password) || store.Sealed(ep.PrivateKey) {
+			err = fmt.Errorf("服务器 %s 保存的登录凭据无法解密，请在服务器设置中重新填写", s.Name)
+			return
+		}
 		jumpID = s.JumpServerID
+		if s.Proxy != nil {
+			cp := *s.Proxy
+			proxy = &cp
+		}
 	})
 	if err != nil {
 		return nil, err
 	}
-	if jumpID != "" && jumpID != id {
-		j, err := a.endpoint(jumpID, depth+1)
+	if via == nil {
+		via = a.tempRoute(id)
+	}
+	if via != nil {
+		jumpID, proxy = via.JumpID, via.Proxy
+	}
+	switch {
+	case jumpID != "" && jumpID != id:
+		j, err := a.endpointVia(jumpID, depth+1, nil)
 		if err != nil {
 			return nil, fmt.Errorf("跳板机配置错误: %w", err)
 		}
 		ep.Jump = j
+	case proxy != nil:
+		ep.Proxy = dialProxy(proxy)
 	}
 	return ep, nil
 }
@@ -263,7 +317,10 @@ func (a *App) learnHostKey(serverID, key, fp string) {
 func (a *App) statusLoop() {
 	time.Sleep(800 * time.Millisecond)
 	for {
-		a.probeAll()
+		// 还没有输入启动密码时不探测（代理的密码也还是密文），解锁后会立即探测一次
+		if !a.store.Locked() {
+			a.probeAll()
+		}
 		interval := time.Duration(max(a.settings().General.StatusInterval, 15)) * time.Second
 		select {
 		case <-time.After(interval):
@@ -290,16 +347,9 @@ func (a *App) probeAll() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			st := ServerStatus{CheckedAt: time.Now().UnixMilli()}
-			host, port := s.Host, s.Port
-			if s.JumpServerID != "" {
-				// 经跳板机访问的服务器，以跳板机可达性作为参考
-				a.store.Read(func(d *store.Data) {
-					if j := d.Server(s.JumpServerID); j != nil {
-						host, port = j.Host, j.Port
-					}
-				})
-			}
-			ms, err := sshx.Probe(context.Background(), host, port, 5*time.Second)
+			// 经跳板机访问的服务器，以跳板机可达性作为参考；经代理访问的通过代理探测
+			host, port, proxy := a.probeTarget(s)
+			ms, err := sshx.ProbeVia(context.Background(), host, port, proxy, 5*time.Second)
 			if err != nil {
 				st.Status, st.Error = "offline", err.Error()
 			} else {

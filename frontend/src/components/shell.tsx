@@ -12,6 +12,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Layers,
+  Lock,
   Maximize2,
   Menu as MenuIcon,
   Minus,
@@ -29,7 +30,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { runtime } from "../lib/api";
+import { api, runtime } from "../lib/api";
 import { cn } from "../lib/format";
 import { useApp, useConfirm, useToasts, type Page } from "../lib/store";
 import { useAgent } from "../lib/agent";
@@ -213,7 +214,30 @@ function ThemeButton() {
   );
 }
 
-function WindowButtons() {
+/** 设置了启动密码时显示：点一下把界面锁上 */
+function LockButton() {
+  const lock = useApp((s) => s.lock);
+  const setLock = useApp((s) => s.setLock);
+  if (!lock?.enabled) return null;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        api
+          .LockNow()
+          .then(setLock)
+          .catch(() => {})
+      }
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-panel2 hover:text-fg"
+      data-tip="锁定"
+      data-tip-pos="bottom"
+    >
+      <Lock size={15} />
+    </button>
+  );
+}
+
+export function WindowButtons() {
   return (
     <>
       <WinButton onClick={() => runtime.WindowMinimise()} icon={<Minus size={15} />} />
@@ -269,6 +293,7 @@ export function TitleBar({ onSearch }: { onSearch: () => void }) {
             <Search size={15} />
           </button>
         )}
+        <LockButton />
         <ThemeButton />
         <WindowButtons />
       </div>

@@ -29,7 +29,7 @@ type terminal struct {
 type termOutput struct {
 	mu        sync.Mutex
 	buf       []byte
-	recent    []byte    // 最近的输出（供 AI 运维读取屏幕内容），超过上限时丢弃最早的部分
+	recent    []byte // 最近的输出（供 AI 运维读取屏幕内容），超过上限时丢弃最早的部分
 	lastWrite time.Time
 	notify    chan struct{}
 	done      chan struct{}
@@ -98,11 +98,13 @@ type TerminalInfo struct {
 }
 
 type TerminalManager struct {
-	pool  *Pool
-	emit  Emitter
-	mu    sync.Mutex
-	terms map[string]*terminal
-	seq   int
+	pool *Pool
+	emit Emitter
+	// OnClose 在某个终端结束后调用（用户关闭或连接断开）。
+	OnClose func(serverID string)
+	mu      sync.Mutex
+	terms   map[string]*terminal
+	seq     int
 }
 
 func NewTerminalManager(pool *Pool, emit Emitter) *TerminalManager {
@@ -211,6 +213,9 @@ func (m *TerminalManager) finish(id, reason string) {
 		close(t.out.done)
 		t.out.flush()
 		m.emit("term:exit:"+id, reason)
+		if m.OnClose != nil {
+			m.OnClose(t.serverID)
+		}
 	})
 }
 

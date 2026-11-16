@@ -188,6 +188,9 @@ func (a *App) DeleteKey(id string) error {
 
 // ExportPrivateKey 把私钥保存到用户选择的文件。
 func (a *App) ExportPrivateKey(id string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	var pem, name string
 	a.store.Read(func(d *store.Data) {
 		if k := d.Key(id); k != nil {

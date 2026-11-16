@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -157,6 +158,9 @@ func (a *App) OpenFilesWindow(serverID string) error {
 	if a.filesWindow != "" {
 		return errors.New("请从主窗口打开其他服务器的文件管理")
 	}
+	if err := a.guard(); err != nil {
+		return err
+	}
 	exists := false
 	a.store.Read(func(d *store.Data) { exists = d.Server(serverID) != nil })
 	if !exists {
@@ -178,12 +182,15 @@ func (a *App) OpenFilesWindow(serverID string) error {
 	}
 	cmd := exec.Command(exe)
 	// 明确告诉窗口进程使用同一个数据目录（两个进程共用 WebView2 的界面偏好，主题等设置才能同步）
-	cmd.Env = append(os.Environ(), envFilesWindow+"="+serverID, envParentPID+"="+strconv.Itoa(os.Getpid()), envDataDir+"="+a.dataDir)
+	cmd.Env = append(os.Environ(), envFilesWindow+"="+serverID, envParentPID+"="+strconv.Itoa(os.Getpid()), envDataDir+"="+a.dataDir,
+		// 设置了启动密码时把数据密钥交给窗口进程，不用再输入一次；临时线路也一并交过去
+		envVaultKey+"="+hex.EncodeToString(a.store.VaultKey()), envTempRoute+"="+a.tempRouteEnv(serverID))
 	if err := cmd.Start(); err != nil {
 		return errors.New("无法打开文件管理窗口：" + err.Error())
 	}
 	w := &fileWindow{serverID: serverID, pid: cmd.Process.Pid}
 	a.fileWins = append(a.fileWins, w)
+	a.routeUsed(serverID)
 	a.emit("fileswin:changed", a.fileWindowIDsLocked())
 	go func() {
 		_ = cmd.Wait()
@@ -192,6 +199,7 @@ func (a *App) OpenFilesWindow(serverID string) error {
 		ids := a.fileWindowIDsLocked()
 		a.winMu.Unlock()
 		a.emit("fileswin:changed", ids)
+		a.routeUseEnded(serverID)
 	}()
 	return nil
 }
@@ -221,6 +229,8 @@ func (a *App) startFilesWindow() {
 		for range time.Tick(3 * time.Second) {
 			if a.store.ReloadIfChanged() {
 				a.emit("store:reloaded")
+				// 主窗口设置、修改或取消了启动密码
+				a.emit("lock:changed", a.lockState())
 			}
 		}
 	}()

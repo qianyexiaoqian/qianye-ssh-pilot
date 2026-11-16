@@ -265,6 +265,9 @@ func (a *App) DeleteCert(id string) error {
 
 // ExportCert 把证书文件导出到用户选择的目录。
 func (a *App) ExportCert(id string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	var c *store.Certificate
 	a.store.Read(func(d *store.Data) {
 		if x := d.Cert(id); x != nil {

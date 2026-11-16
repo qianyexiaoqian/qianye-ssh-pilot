@@ -9,6 +9,7 @@ import { AUTHOR, Logo, PRODUCT } from "../components/shell";
 import { termThemes } from "../components/XTermView";
 import { INTERVALS } from "./Monitor";
 import { MemorySettings } from "./SettingsMemory";
+import { SecuritySettings } from "./SettingsSecurity";
 
 interface Preset {
   id: string;
@@ -30,7 +31,7 @@ const presets: Preset[] = [
   { id: "custom", name: "自定义", provider: "openai", baseUrl: "", models: [], note: "任意 OpenAI 兼容接口" },
 ];
 
-type Tab = "ai" | "memory" | "agent" | "terminal" | "general" | "data" | "about";
+type Tab = "ai" | "memory" | "agent" | "terminal" | "general" | "security" | "data" | "about";
 
 const hotkeys: { field: keyof typeof DEFAULT_KEYS; action: HotkeyAction; label: string; desc: string }[] = [
   { field: "keyCopy", action: "copy", label: "复制", desc: "复制选中的文字" },
@@ -150,7 +151,7 @@ export default function SettingsPage() {
       <PageHeader
         title="设置"
         icon={SettingsIcon}
-        description="AI 模型、长期记忆、智能体行为、终端外观与数据备份"
+        description="AI 模型、长期记忆、智能体行为、终端外观、启动密码与数据备份"
         actions={
           <Button variant={dirty ? "primary" : "secondary"} icon={Save} loading={saving} disabled={!dirty} onClick={save}>
             保存设置
@@ -167,6 +168,7 @@ export default function SettingsPage() {
           { key: "agent", label: "智能体", icon: Zap },
           { key: "terminal", label: "终端", icon: SquareTerminal },
           { key: "general", label: "通用", icon: Monitor },
+          { key: "security", label: "安全", icon: Shield },
           { key: "data", label: "数据与备份", icon: Database },
           { key: "about", label: "关于", icon: Info },
         ]}
@@ -483,6 +485,8 @@ export default function SettingsPage() {
               </Card>
             </>
           )}
+
+          {tab === "security" && <SecuritySettings />}
 
           {tab === "data" && (
             <>

@@ -56,6 +56,28 @@ export type Transfer = Plain<main.Transfer>;
 export type LongItem = Plain<main.LongItem>;
 export type IndexStatus = Plain<agent.IndexStatus>;
 export type EmbedTest = Plain<main.EmbedTest>;
+export type LockState = Plain<main.LockState>;
+export type RouteView = Plain<main.RouteView>;
+export type ServerSecrets = Plain<main.ServerSecrets>;
+export type LocalProxy = Plain<main.LocalProxy>;
+export type ProxyConfig = Plain<store.ProxyConfig>;
+
+/** 界面填写的代理；keepPassword 表示沿用已经保存的代理密码 */
+export interface ProxyInput {
+  type: "" | "local" | "http" | "socks5";
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  keepPassword: boolean;
+}
+
+/** 连接线路：直连、经跳板机或经代理 */
+export interface RouteInput {
+  mode: "direct" | "jump" | "proxy";
+  jumpServerId: string;
+  proxy: ProxyInput;
+}
 
 /** 随用户消息保存的一条召回记录：提问时程序自动附给 AI 的长期记忆、往期对话要点或技能提示 */
 export interface RecallItem {

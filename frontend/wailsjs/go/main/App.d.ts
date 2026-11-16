@@ -36,6 +36,8 @@ export function CheckTLS(arg1:string,arg2:number,arg3:string):Promise<certs.TLSI
 
 export function ClearInspection():Promise<void>;
 
+export function ClearTempRoute(arg1:string):Promise<void>;
+
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function DeleteArchivedSkill(arg1:string):Promise<void>;
@@ -59,6 +61,8 @@ export function DeleteSkill(arg1:string):Promise<void>;
 export function DeleteTarget(arg1:string):Promise<void>;
 
 export function DeployCert(arg1:string,arg2:Array<string>):Promise<string>;
+
+export function DetectLocalProxy():Promise<main.LocalProxy>;
 
 export function DiscoverCerts(arg1:string):Promise<Array<main.DiscoveredView>>;
 
@@ -116,6 +120,8 @@ export function GetLastInspection():Promise<ops.Report>;
 
 export function GetLearningLog(arg1:number):Promise<Array<agent.LearnEvent>>;
 
+export function GetLockState():Promise<main.LockState>;
+
 export function GetMemory():Promise<Array<agent.MemoryView>>;
 
 export function GetMemoryIndex():Promise<agent.IndexStatus>;
@@ -123,6 +129,8 @@ export function GetMemoryIndex():Promise<agent.IndexStatus>;
 export function GetRun(arg1:string):Promise<store.RunRecord>;
 
 export function GetServerInfo(arg1:string):Promise<ops.ServerInfo>;
+
+export function GetServerSecrets(arg1:string):Promise<main.ServerSecrets>;
 
 export function GetSettings():Promise<store.Settings>;
 
@@ -162,6 +170,10 @@ export function ListServices(arg1:string):Promise<Array<ops.ServiceInfo>>;
 
 export function ListSkills():Promise<Array<agent.SkillMeta>>;
 
+export function ListTempRoutes():Promise<Array<main.RouteView>>;
+
+export function LockNow():Promise<main.LockState>;
+
 export function MonitorRetry(arg1:string):Promise<void>;
 
 export function MonitorSnapshot():Promise<Array<ops.Sample>>;
@@ -194,11 +206,15 @@ export function ReindexMemory():Promise<void>;
 
 export function RemoveAuthorizedKey(arg1:string,arg2:string):Promise<void>;
 
+export function RemoveLockPassword(arg1:string):Promise<main.LockState>;
+
 export function RenameKey(arg1:string,arg2:string):Promise<void>;
 
 export function RenamePublicKey(arg1:string,arg2:string):Promise<void>;
 
 export function ReorderQuickCommands(arg1:Array<string>):Promise<void>;
+
+export function ResetLock():Promise<main.ResetLockResult>;
 
 export function RestoreSkill(arg1:string):Promise<void>;
 
@@ -222,6 +238,8 @@ export function SaveScript(arg1:store.Script):Promise<store.Script>;
 
 export function SaveServer(arg1:main.ServerInput):Promise<store.Server>;
 
+export function SaveServerRoute(arg1:string,arg2:main.RouteInput):Promise<store.Server>;
+
 export function SaveSettings(arg1:store.Settings,arg2:string,arg3:boolean):Promise<store.Settings>;
 
 export function SaveSkill(arg1:string,arg2:string):Promise<void>;
@@ -238,11 +256,17 @@ export function ServiceLogs(arg1:string,arg2:string,arg3:number):Promise<string>
 
 export function ServiceStatus(arg1:string,arg2:string):Promise<string>;
 
+export function SetAutoLock(arg1:number):Promise<main.LockState>;
+
 export function SetCertAutoSync(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetInspectInterval(arg1:number):Promise<store.Settings>;
 
+export function SetLockPassword(arg1:string,arg2:string):Promise<main.LockState>;
+
 export function SetMonitor(arg1:number,arg2:boolean):Promise<store.Settings>;
+
+export function SetTempRoute(arg1:string,arg2:main.RouteInput):Promise<main.RouteView>;
 
 export function SyncCertNow(arg1:string):Promise<main.AutoSyncResult>;
 
@@ -256,6 +280,8 @@ export function TestAI():Promise<string>;
 
 export function TestEmbedding():Promise<main.EmbedTest>;
 
+export function TestRoute(arg1:string,arg2:main.RouteInput):Promise<main.TestResult>;
+
 export function TestServer(arg1:string):Promise<main.TestResult>;
 
 export function TestServerInput(arg1:main.ServerInput):Promise<main.TestResult>;
@@ -263,5 +289,7 @@ export function TestServerInput(arg1:main.ServerInput):Promise<main.TestResult>;
 export function TrustHostKey(arg1:string):Promise<void>;
 
 export function UnbindPublicKey(arg1:string,arg2:Array<string>):Promise<Array<main.OpResult>>;
+
+export function Unlock(arg1:string):Promise<main.LockState>;
 
 export function UpdateCertMeta(arg1:string,arg2:string,arg3:string):Promise<void>;

@@ -1,33 +1,56 @@
 package store
 
+// ProxyConfig 是连接服务器时经过的代理。Type 为 local 表示本机上的代理软件（Clash、v2rayN 等，
+// 地址固定是 127.0.0.1，协议在连接时自动识别），http / socks5 是指定地址的代理。
+type ProxyConfig struct {
+	Type        string `json:"type"` // local | http | socks5
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	Password    string `json:"password,omitempty"`
+	HasPassword bool   `json:"hasPassword"`
+}
+
+func (p *ProxyConfig) sanitized() *ProxyConfig {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.HasPassword = cp.Password != ""
+	cp.Password = ""
+	return &cp
+}
+
 // Server 是一台受管的 SSH 服务器。Password / SudoPassword 只在后端与磁盘（加密）中存在，
-// 返回给前端前会通过 Sanitized 清空。
+// 列表返回给前端前会通过 Sanitized 清空；界面要显示或复制密码时单独读取。
 type Server struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Host            string   `json:"host"`
-	Port            int      `json:"port"`
-	Username        string   `json:"username"`
-	AuthType        string   `json:"authType"` // key | password
-	KeyID           string   `json:"keyId"`
-	Password        string   `json:"password,omitempty"`
-	HasPassword     bool     `json:"hasPassword"`
-	Group           string   `json:"group"`
-	Tags            []string `json:"tags"`
-	JumpServerID    string   `json:"jumpServerId"`
-	UseSudo         bool     `json:"useSudo"`
-	SudoPassword    string   `json:"sudoPassword,omitempty"`
-	HasSudoPassword bool     `json:"hasSudoPassword"`
-	Notes           string   `json:"notes"`
-	HostKey         string   `json:"hostKey"`
-	HostKeyFP       string   `json:"hostKeyFingerprint"`
-	OS              string   `json:"os"`
-	LastStatus      string   `json:"lastStatus"` // online | offline | unknown
-	LastLatency     int      `json:"lastLatency"`
-	LastCheckAt     int64    `json:"lastCheckAt"`
-	LastError       string   `json:"lastError"`
-	CreatedAt       int64    `json:"createdAt"`
-	UpdatedAt       int64    `json:"updatedAt"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Host         string   `json:"host"`
+	Port         int      `json:"port"`
+	Username     string   `json:"username"`
+	AuthType     string   `json:"authType"` // key | password
+	KeyID        string   `json:"keyId"`
+	Password     string   `json:"password,omitempty"`
+	HasPassword  bool     `json:"hasPassword"`
+	Group        string   `json:"group"`
+	Tags         []string `json:"tags"`
+	JumpServerID string   `json:"jumpServerId"`
+	// Proxy 不为空表示经代理连接（与跳板机二选一，设置了跳板机时不生效）。
+	Proxy           *ProxyConfig `json:"proxy,omitempty"`
+	UseSudo         bool         `json:"useSudo"`
+	SudoPassword    string       `json:"sudoPassword,omitempty"`
+	HasSudoPassword bool         `json:"hasSudoPassword"`
+	Notes           string       `json:"notes"`
+	HostKey         string       `json:"hostKey"`
+	HostKeyFP       string       `json:"hostKeyFingerprint"`
+	OS              string       `json:"os"`
+	LastStatus      string       `json:"lastStatus"` // online | offline | unknown
+	LastLatency     int          `json:"lastLatency"`
+	LastCheckAt     int64        `json:"lastCheckAt"`
+	LastError       string       `json:"lastError"`
+	CreatedAt       int64        `json:"createdAt"`
+	UpdatedAt       int64        `json:"updatedAt"`
 }
 
 func (s Server) Sanitized() Server {
@@ -35,6 +58,7 @@ func (s Server) Sanitized() Server {
 	s.HasSudoPassword = s.SudoPassword != ""
 	s.Password = ""
 	s.SudoPassword = ""
+	s.Proxy = s.Proxy.sanitized()
 	if s.Tags == nil {
 		s.Tags = []string{}
 	}
@@ -281,6 +305,8 @@ type GeneralSettings struct {
 	MonitorOff      bool `json:"monitorOff"`
 	// InspectInterval 是自动巡检的间隔（分钟），0 表示不自动巡检。
 	InspectInterval int `json:"inspectInterval"`
+	// LastProxy 是最近一次使用的代理，下次选择「经代理连接」时自动填好。
+	LastProxy *ProxyConfig `json:"lastProxy,omitempty"`
 }
 
 type Settings struct {
@@ -295,6 +321,7 @@ func (s Settings) Sanitized() Settings {
 	s.AI.APIKey = ""
 	s.Embed.HasAPIKey = s.Embed.APIKey != ""
 	s.Embed.APIKey = ""
+	s.General.LastProxy = s.General.LastProxy.sanitized()
 	return s
 }
 

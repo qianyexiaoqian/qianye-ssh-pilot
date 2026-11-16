@@ -967,6 +967,50 @@ export namespace main {
 	        this.usedBy = source["usedBy"];
 	    }
 	}
+	export class LocalProxy {
+	    found: boolean;
+	    port: number;
+	    type: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalProxy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.port = source["port"];
+	        this.type = source["type"];
+	        this.source = source["source"];
+	    }
+	}
+	export class LockState {
+	    enabled: boolean;
+	    locked: boolean;
+	    sealed: boolean;
+	    missing: boolean;
+	    autoLock: number;
+	    retryAt: number;
+	    setAt: number;
+	    legacyDir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LockState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.locked = source["locked"];
+	        this.sealed = source["sealed"];
+	        this.missing = source["missing"];
+	        this.autoLock = source["autoLock"];
+	        this.retryAt = source["retryAt"];
+	        this.setAt = source["setAt"];
+	        this.legacyDir = source["legacyDir"];
+	    }
+	}
 	export class LongItem {
 	    id: string;
 	    kind: string;
@@ -1021,6 +1065,28 @@ export namespace main {
 	        this.ok = source["ok"];
 	        this.message = source["message"];
 	        this.output = source["output"];
+	    }
+	}
+	export class ProxyInput {
+	    type: string;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	    keepPassword: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxyInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.keepPassword = source["keepPassword"];
 	    }
 	}
 	export class PublicKeyView {
@@ -1125,6 +1191,116 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ResetLockResult {
+	    state: LockState;
+	    wiped: number;
+	    keys: number;
+	    servers: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResetLockResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = this.convertValues(source["state"], LockState);
+	        this.wiped = source["wiped"];
+	        this.keys = source["keys"];
+	        this.servers = source["servers"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RouteInput {
+	    mode: string;
+	    jumpServerId: string;
+	    proxy: ProxyInput;
+	
+	    static createFrom(source: any = {}) {
+	        return new RouteInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.jumpServerId = source["jumpServerId"];
+	        this.proxy = this.convertValues(source["proxy"], ProxyInput);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RouteView {
+	    serverId: string;
+	    mode: string;
+	    jumpServerId: string;
+	    proxy?: store.ProxyConfig;
+	    label: string;
+	    since: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RouteView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.serverId = source["serverId"];
+	        this.mode = source["mode"];
+	        this.jumpServerId = source["jumpServerId"];
+	        this.proxy = this.convertValues(source["proxy"], store.ProxyConfig);
+	        this.label = source["label"];
+	        this.since = source["since"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RunRequest {
 	    scriptId: string;
 	    content: string;
@@ -1162,10 +1338,12 @@ export namespace main {
 	    group: string;
 	    tags: string[];
 	    jumpServerId: string;
+	    proxy: ProxyInput;
 	    useSudo: boolean;
 	    sudoPassword: string;
 	    clearSudoPassword: boolean;
 	    notes: string;
+	    os: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerInput(source);
@@ -1185,10 +1363,46 @@ export namespace main {
 	        this.group = source["group"];
 	        this.tags = source["tags"];
 	        this.jumpServerId = source["jumpServerId"];
+	        this.proxy = this.convertValues(source["proxy"], ProxyInput);
 	        this.useSudo = source["useSudo"];
 	        this.sudoPassword = source["sudoPassword"];
 	        this.clearSudoPassword = source["clearSudoPassword"];
 	        this.notes = source["notes"];
+	        this.os = source["os"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ServerSecrets {
+	    password: string;
+	    sudoPassword: string;
+	    proxyPassword: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerSecrets(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.password = source["password"];
+	        this.sudoPassword = source["sudoPassword"];
+	        this.proxyPassword = source["proxyPassword"];
 	    }
 	}
 	export class SessionView {
@@ -1871,6 +2085,28 @@ export namespace store {
 	        this.minScore = source["minScore"];
 	    }
 	}
+	export class ProxyConfig {
+	    type: string;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password?: string;
+	    hasPassword: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxyConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.hasPassword = source["hasPassword"];
+	    }
+	}
 	export class GeneralSettings {
 	    theme: string;
 	    statusInterval: number;
@@ -1880,6 +2116,7 @@ export namespace store {
 	    monitorInterval: number;
 	    monitorOff: boolean;
 	    inspectInterval: number;
+	    lastProxy?: ProxyConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new GeneralSettings(source);
@@ -1895,8 +2132,28 @@ export namespace store {
 	        this.monitorInterval = source["monitorInterval"];
 	        this.monitorOff = source["monitorOff"];
 	        this.inspectInterval = source["inspectInterval"];
+	        this.lastProxy = this.convertValues(source["lastProxy"], ProxyConfig);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
+	
 	export class PublicKey {
 	    id: string;
 	    name: string;
@@ -2106,6 +2363,7 @@ export namespace store {
 	    group: string;
 	    tags: string[];
 	    jumpServerId: string;
+	    proxy?: ProxyConfig;
 	    useSudo: boolean;
 	    sudoPassword?: string;
 	    hasSudoPassword: boolean;
@@ -2138,6 +2396,7 @@ export namespace store {
 	        this.group = source["group"];
 	        this.tags = source["tags"];
 	        this.jumpServerId = source["jumpServerId"];
+	        this.proxy = this.convertValues(source["proxy"], ProxyConfig);
 	        this.useSudo = source["useSudo"];
 	        this.sudoPassword = source["sudoPassword"];
 	        this.hasSudoPassword = source["hasSudoPassword"];
@@ -2152,6 +2411,24 @@ export namespace store {
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TerminalSettings {
 	    fontSize: number;

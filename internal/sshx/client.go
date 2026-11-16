@@ -29,6 +29,8 @@ type Endpoint struct {
 	UseSudo      bool
 	SudoPassword string
 	Jump         *Endpoint
+	// Proxy 不为空时先连代理、再由代理连到服务器；有跳板机时由跳板机负责连接，这里的代理不生效。
+	Proxy *Proxy
 }
 
 func (e *Endpoint) Addr() string { return net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) }
@@ -175,6 +177,8 @@ func Dial(ctx context.Context, ep *Endpoint, learn HostKeyLearner, timeout time.
 		dctx, cancel := context.WithTimeout(ctx, timeout)
 		conn, err = jump.DialContext(dctx, "tcp", ep.Addr())
 		cancel()
+	} else if ep.Proxy != nil {
+		conn, err = DialProxy(ctx, ep.Proxy, ep.Host, ep.Port, timeout)
 	} else {
 		d := net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
 		conn, err = d.DialContext(ctx, "tcp", ep.Addr())
@@ -220,6 +224,11 @@ func friendlyError(err error) error {
 	if errors.As(err, &mismatch) {
 		return mismatch
 	}
+	// 代理这一段的错误已经写明是哪里出的问题
+	var viaProxy *ProxyError
+	if errors.As(err, &viaProxy) {
+		return err
+	}
 	msg := err.Error()
 	var hint string
 	switch {
@@ -252,6 +261,10 @@ func IsAuthError(err error) bool {
 	if errors.As(err, &mismatch) {
 		return true
 	}
+	var viaProxy *ProxyError
+	if errors.As(err, &viaProxy) {
+		return viaProxy.Stage == "auth"
+	}
 	msg := err.Error()
 	for _, kw := range []string{"unable to authenticate", "未配置登录凭据", "私钥已加密", "密码短语不正确", "无法解析私钥", "PuTTY"} {
 		if strings.Contains(msg, kw) {
@@ -269,6 +282,8 @@ type Pool struct {
 	resolve Resolver
 	learn   HostKeyLearner
 	Timeout time.Duration
+	// OnConnect 在每次新建连接成功后调用（连接池里的连接和终端的独立连接都算）；回调里不要做耗时的事。
+	OnConnect func(serverID string, c *Client)
 
 	mu      sync.Mutex
 	clients map[string]*Client
@@ -324,7 +339,11 @@ func (p *Pool) DialFresh(ctx context.Context, serverID string) (*Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	return Dial(ctx, ep, p.learn, p.Timeout)
+	c, err := Dial(ctx, ep, p.learn, p.Timeout)
+	if err == nil && p.OnConnect != nil {
+		p.OnConnect(serverID, c)
+	}
+	return c, err
 }
 
 // Invalidate 关闭并移除缓存的连接（服务器配置变化或连接失效时调用）。

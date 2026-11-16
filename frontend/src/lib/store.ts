@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, errText, type KeyView, type Server, type ServerStatus, type Settings, type AppInfo } from "./api";
+import { api, errText, type KeyView, type LockState, type RouteView, type Server, type ServerStatus, type Settings, type AppInfo } from "./api";
 
 export type Page =
   | "dashboard"
@@ -38,7 +38,17 @@ interface AppState {
   settings: Settings | null;
   theme: "dark" | "light";
   sidebarCollapsed: boolean;
+  /** 启动密码的状态；null 表示还没有读到 */
+  lock: LockState | null;
+  /** 正在生效的临时线路，按服务器 ID 索引 */
+  routes: Record<string, RouteView>;
+  /** 正在为哪台服务器选择连接线路（打开线路对话框） */
+  routeFor: string | null;
 
+  loadLock: () => Promise<void>;
+  setLock: (l: LockState) => void;
+  loadRoutes: () => Promise<void>;
+  openRoute: (serverId: string | null) => void;
   loadInfo: () => Promise<void>;
   loadServers: () => Promise<void>;
   loadKeys: () => Promise<void>;
@@ -70,7 +80,23 @@ export const useApp = create<AppState>((set, get) => ({
   settings: null,
   theme: (localStorage.getItem("theme") as "dark" | "light") || "dark",
   sidebarCollapsed: localStorage.getItem("sidebar") === "collapsed",
+  lock: null,
+  routes: {},
+  routeFor: null,
 
+  loadLock: async () => {
+    try {
+      set({ lock: await api.GetLockState() });
+    } catch (e) {
+      console.error(errText(e));
+    }
+  },
+  setLock: (l) => set({ lock: l }),
+  loadRoutes: async () => {
+    const list = (await api.ListTempRoutes()) ?? [];
+    set({ routes: Object.fromEntries(list.map((r) => [r.serverId, r])) });
+  },
+  openRoute: (serverId) => set({ routeFor: serverId }),
   loadInfo: async () => {
     try {
       set({ info: await api.GetAppInfo() });

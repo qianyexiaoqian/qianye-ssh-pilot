@@ -30,6 +30,12 @@ type Store struct {
 	readOnly bool
 	modTime  time.Time
 
+	// 启动密码（见 vault.go）：lock 不为空表示设置了启动密码；vaultKey 是解锁后得到的数据密钥；
+	// sealed 是内存里还没有解密的敏感字段数量。
+	lock     *lockFile
+	vaultKey []byte
+	sealed   int
+
 	runsMu sync.Mutex
 	runs   []*RunRecord
 }
@@ -91,6 +97,10 @@ func (s *Store) SecretErrors() int {
 func (s *Store) path() string { return filepath.Join(s.dir, "store.json") }
 
 func (s *Store) load() error {
+	s.lock = s.readLockFile()
+	if s.lock == nil || keyCheck(s.vaultKey) != s.lock.Check {
+		s.vaultKey = nil
+	}
 	b, err := os.ReadFile(s.path())
 	if errors.Is(err, os.ErrNotExist) {
 		s.data = &Data{Version: 1, Settings: DefaultSettings(), AIDefaultV2: true}
@@ -112,6 +122,10 @@ func (s *Store) load() error {
 		}
 	}
 	s.secretErrors = transformSecrets(&d, decryptSecret)
+	if s.vaultKey != nil {
+		s.secretErrors += openVault(&d, s.vaultKey)
+	}
+	s.sealed = countSealed(&d)
 	migrateAIDefault(&d)
 	d.Settings.fillDefaults()
 	ensureBuiltinScripts(&d)
@@ -149,6 +163,12 @@ func (s *Store) saveLocked() error {
 	if err := json.Unmarshal(raw, &cp); err != nil {
 		return err
 	}
+	// 设置了启动密码时，敏感字段先用数据密钥加密，再交给系统加密
+	if s.vaultKey != nil {
+		if n := sealVault(&cp, s.vaultKey); n > 0 {
+			return fmt.Errorf("加密敏感数据失败（%d 项）", n)
+		}
+	}
 	if n := transformSecrets(&cp, encryptSecret); n > 0 {
 		return fmt.Errorf("加密敏感数据失败（%d 项）", n)
 	}
@@ -184,27 +204,23 @@ func (s *Store) Replace(d *Data) error {
 	ensureQuickCommands(d)
 	s.data = d
 	s.secretErrors = 0
+	s.sealed = countSealed(d)
 	return s.saveLocked()
 }
 
-// transformSecrets 对所有敏感字段应用 fn，返回失败数量；失败的字段被清空。
-func transformSecrets(d *Data, fn func(string) (string, error)) int {
-	failed := 0
+// eachSecret 依次访问所有非空的敏感字段。
+func eachSecret(d *Data, fn func(p *string)) {
 	apply := func(p *string) {
-		if *p == "" {
-			return
+		if *p != "" {
+			fn(p)
 		}
-		v, err := fn(*p)
-		if err != nil {
-			failed++
-			*p = ""
-			return
-		}
-		*p = v
 	}
 	for _, s := range d.Servers {
 		apply(&s.Password)
 		apply(&s.SudoPassword)
+		if s.Proxy != nil {
+			apply(&s.Proxy.Password)
+		}
 	}
 	for _, k := range d.Keys {
 		apply(&k.PrivatePEM)
@@ -215,6 +231,23 @@ func transformSecrets(d *Data, fn func(string) (string, error)) int {
 	}
 	apply(&d.Settings.AI.APIKey)
 	apply(&d.Settings.Embed.APIKey)
+	if p := d.Settings.General.LastProxy; p != nil {
+		apply(&p.Password)
+	}
+}
+
+// transformSecrets 对所有敏感字段应用 fn，返回失败数量；失败的字段被清空。
+func transformSecrets(d *Data, fn func(string) (string, error)) int {
+	failed := 0
+	eachSecret(d, func(p *string) {
+		v, err := fn(*p)
+		if err != nil {
+			failed++
+			*p = ""
+			return
+		}
+		*p = v
+	})
 	return failed
 }
 

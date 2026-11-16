@@ -12,6 +12,7 @@ import {
   EyeOff,
   Fingerprint,
   FolderOpen,
+  Globe,
   HardDrive,
   KeyRound,
   LayoutGrid,
@@ -33,7 +34,7 @@ import {
   Upload,
   Zap,
 } from "lucide-react";
-import { api, runtime, type AuthorizedKeyView, type PublicKeyView, type Server, type ServerInfo, type TestResult } from "../lib/api";
+import { api, runtime, type AuthorizedKeyView, type PublicKeyView, type Server, type ServerInfo, type ServerSecrets, type TestResult } from "../lib/api";
 import { cn, formatBytes, formatDuration, formatRate, parseSSHTarget, timeAgo, usageTone } from "../lib/format";
 import { chartWindow, liveState, useMonitorError, useMonitorWatch, useNow, useSeries } from "../lib/monitor";
 import { openFilesWindow, useOpenServerIds } from "../lib/term";
@@ -64,15 +65,19 @@ import {
 } from "../components/ui";
 import { KV, ServerAvatar } from "../components/widgets";
 import { OpResultList } from "../components/QuickRun";
+import { emptyProxy, noProxy, ProxyFields, proxyFormOf, proxyInputOf, proxyText, type ProxyForm } from "../components/RouteDialog";
 import { LiveChart, niceMax, SERIES_COLORS } from "../components/charts";
 
 export default function Servers() {
-  const { servers, status, loadServers, params, openTerminal } = useApp();
+  const { servers, status, routes, loadServers, loadRoutes, params, openTerminal, openRoute } = useApp();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("all");
   const [view, setView] = useState<"grid" | "list">((localStorage.getItem("servers-view") as "grid" | "list") || "grid");
   const [editing, setEditing] = useState<Server | null | undefined>(undefined);
-  const [detail, setDetail] = useState<Server | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  // 详情里显示的是最新的服务器信息（连上之后识别出的系统名称会跟着更新）
+  const detail = servers.find((s) => s.id === detailId) ?? null;
+  const setDetail = (s: Server | null) => setDetailId(s?.id ?? null);
   const [testing, setTesting] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -122,11 +127,29 @@ export default function Servers() {
       toast.error("删除失败", e);
     }
   };
+  const copyPassword = async (s: Server) => {
+    try {
+      const sec = await api.GetServerSecrets(s.id);
+      runtime.ClipboardSetText(sec.password);
+      toast.ok("已复制登录密码", s.name);
+    } catch (e) {
+      toast.error("复制失败", e);
+    }
+  };
+  const cancelRoute = async (s: Server) => {
+    await api.ClearTempRoute(s.id);
+    await loadRoutes();
+    toast.ok("已取消临时线路", s.name);
+  };
   const menu = (s: Server) => [
     { label: "编辑", icon: Pencil, onClick: () => setEditing(s) },
     { label: "文件管理", icon: FolderOpen, onClick: () => void openFilesWindow(s.id) },
     { label: "测试连接", icon: Plug, onClick: () => test(s) },
+    { label: "连接线路…", icon: Route, onClick: () => openRoute(s.id) },
+    ...(routes[s.id] ? [{ label: "取消临时线路", icon: CircleX, onClick: () => void cancelRoute(s) }] : []),
+    { label: "", onClick: () => {}, divider: true },
     { label: "复制地址", icon: Copy, onClick: () => runtime.ClipboardSetText(`${s.username}@${s.host} -p ${s.port}`) },
+    ...(s.hasPassword ? [{ label: "复制密码", icon: KeyRound, onClick: () => void copyPassword(s) }] : []),
     { label: "", onClick: () => {}, divider: true },
     { label: "删除", icon: Trash2, danger: true, onClick: () => remove(s) },
   ];
@@ -206,14 +229,35 @@ export default function Servers() {
                     {s.group && <Badge tone="accent">{s.group}</Badge>}
                     <Badge icon={s.authType === "key" ? KeyRound : Lock}>{s.authType === "key" ? "密钥" : "密码"}</Badge>
                     {s.useSudo && <Badge tone="info">sudo</Badge>}
-                    {s.jumpServerId && <Badge icon={Route}>跳板机</Badge>}
+                    {routes[s.id] ? (
+                      <Badge tone="warn" icon={Route} title={`临时线路：${routes[s.id].label}。通过它打开的终端和文件管理窗口全部关闭后自动取消`}>
+                        临时 · {routes[s.id].label}
+                      </Badge>
+                    ) : (
+                      <>
+                        {s.jumpServerId && <Badge icon={Route}>跳板机</Badge>}
+                        {s.proxy && !s.jumpServerId && (
+                          <Badge icon={Globe} title={proxyText(s.proxy)}>
+                            代理
+                          </Badge>
+                        )}
+                      </>
+                    )}
                     {(s.tags ?? []).slice(0, 3).map((t) => (
                       <Badge key={t}>{t}</Badge>
                     ))}
                   </div>
-                  <div className="mt-3 flex items-center justify-between text-[12px] text-muted">
-                    <span className="truncate">{s.os || "系统未知"}</span>
-                    <span className={cn("shrink-0", st?.status === "offline" && "text-bad")}>{st?.status === "online" ? `${st.latency} ms` : st?.status === "offline" ? "不可达" : "检测中"}</span>
+                  <div className="mt-3 flex items-center justify-between gap-2 text-[12px] text-muted">
+                    <span className="truncate" title={s.os ? undefined : "连接一次（终端、测试连接或查看详情）后就能识别出系统"}>
+                      {s.os || "系统未知"}
+                    </span>
+                    {st?.status === "offline" ? (
+                      <button type="button" className="shrink-0 text-bad hover:underline" title="直连不通时，可以临时经跳板机或代理连接" onClick={() => openRoute(s.id)}>
+                        不可达 · 换线路
+                      </button>
+                    ) : (
+                      <span className="shrink-0">{st?.status === "online" ? `${st.latency} ms` : "检测中"}</span>
+                    )}
                   </div>
                   <div className="mt-4 flex gap-2 border-t border-line pt-3">
                     <Button size="sm" variant="primary" icon={SquareTerminal} className="flex-1" onClick={() => openTerminal(s.id)}>
@@ -268,6 +312,17 @@ export default function Servers() {
                         <span className="inline-flex items-center gap-2">
                           <StatusDot status={st?.status} />
                           <span className="text-fg2">{st?.status === "online" ? `${st.latency} ms` : st?.status === "offline" ? "离线" : "-"}</span>
+                          {routes[s.id] ? (
+                            <Badge tone="warn" icon={Route} title={`临时线路：${routes[s.id].label}`}>
+                              临时线路
+                            </Badge>
+                          ) : (
+                            st?.status === "offline" && (
+                              <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => openRoute(s.id)}>
+                                换线路
+                              </button>
+                            )
+                          )}
                         </span>
                       </td>
                       <td className="px-4 py-2.5">
@@ -305,6 +360,9 @@ interface FormState {
   group: string;
   tags: string[];
   jumpServerId: string;
+  /** 连接线路：直连、经跳板机或经代理 */
+  routeMode: "direct" | "jump" | "proxy";
+  proxy: ProxyForm;
   useSudo: boolean;
   sudoPassword: string;
   notes: string;
@@ -312,9 +370,16 @@ interface FormState {
 
 function ServerForm({ open, server, onClose }: { open: boolean; server: Server | null; onClose: () => void }) {
   const { keys, servers, loadServers, loadKeys, go } = useApp();
-  const empty: FormState = { name: "", host: "", port: 22, username: "root", authType: keys.length ? "key" : "password", keyId: keys[0]?.id ?? "", password: "", group: "", tags: [], jumpServerId: "", useSudo: false, sudoPassword: "", notes: "" };
+  const empty: FormState = { name: "", host: "", port: 22, username: "root", authType: keys.length ? "key" : "password", keyId: keys[0]?.id ?? "", password: "", group: "", tags: [], jumpServerId: "", routeMode: "direct", proxy: emptyProxy, useSudo: false, sudoPassword: "", notes: "" };
   const [f, setF] = useState<FormState>(empty);
-  const [showPw, setShowPw] = useState(false);
+  // 已保存的密码直接显示出来，方便查看和复制；需要时可以点眼睛遮住
+  const [showPw, setShowPw] = useState(true);
+  // 已保存的密码读出来了没有：读到了，输入框里就是完整的密码，清空表示删除
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
+  // 上一次测试连接成功时的地址和识别出的系统，保存时一并记下
+  const [tested, setTested] = useState<{ target: string; os: string } | null>(null);
+  // 当前表单对应的服务器：读取密码是异步的，结果回来时表单可能已经换成了另一台
+  const formFor = useRef("");
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -324,8 +389,20 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
     if (!open) return;
     void loadKeys();
     setResult(null);
-    setShowPw(false);
+    setShowPw(true);
+    setSecretsLoaded(false);
+    setTested(null);
+    formFor.current = server?.id ?? "";
     if (server) {
+      const id = server.id;
+      api
+        .GetServerSecrets(id)
+        .then((sec) => {
+          if (formFor.current !== id) return;
+          setF((x) => ({ ...x, password: sec.password, sudoPassword: sec.sudoPassword, proxy: sec.proxyPassword ? { ...x.proxy, password: sec.proxyPassword, saved: false } : x.proxy }));
+          setSecretsLoaded(true);
+        })
+        .catch(() => {});
       setF({
         name: server.name,
         host: server.host,
@@ -337,11 +414,13 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
         group: server.group,
         tags: server.tags ?? [],
         jumpServerId: server.jumpServerId,
+        routeMode: server.jumpServerId ? "jump" : server.proxy ? "proxy" : "direct",
+        proxy: proxyFormOf(server.proxy),
         useSudo: server.useSudo,
         sudoPassword: "",
         notes: server.notes,
       });
-      setAdvanced(!!(server.jumpServerId || server.useSudo || server.notes));
+      setAdvanced(!!(server.jumpServerId || server.proxy || server.useSudo || server.notes));
     } else {
       setF(empty);
       setAdvanced(false);
@@ -350,7 +429,18 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
   }, [open, server]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((x) => ({ ...x, [k]: v }));
-  const input = () => ({ ...f, id: server?.id ?? "", port: Number(f.port) || 22 });
+  const target = () => `${f.username}@${f.host}:${Number(f.port) || 22}`;
+  const input = () => ({
+    ...f,
+    id: server?.id ?? "",
+    port: Number(f.port) || 22,
+    jumpServerId: f.routeMode === "jump" ? f.jumpServerId : "",
+    proxy: f.routeMode === "proxy" ? proxyInputOf(f.proxy) : noProxy,
+    // 密码已经显示在输入框里：清空就是删除
+    clearPassword: secretsLoaded && !f.password && !!server?.hasPassword,
+    clearSudoPassword: secretsLoaded && !f.sudoPassword && !!server?.hasSudoPassword,
+    os: tested && tested.target === target() ? tested.os : "",
+  });
   // 粘贴 ssh 命令或 user@host:port 时自动拆分到各个输入框
   const applyTarget = (text: string, always: boolean) => {
     const p = parseSSHTarget(text);
@@ -367,7 +457,9 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
     setTesting(true);
     setResult(null);
     try {
-      setResult(await api.TestServerInput(input()));
+      const r = await api.TestServerInput(input());
+      setResult(r);
+      setTested(r.ok && r.os ? { target: target(), os: r.os } : null);
     } catch (e) {
       toast.error("测试失败", e);
     } finally {
@@ -468,13 +560,21 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
             </Select>
           </Field>
         ) : (
-          <Field label="登录密码" hint={server?.hasPassword ? "已保存密码，留空表示不修改" : "密码使用 Windows 账户加密保存"}>
+          <Field label="登录密码" hint={server?.hasPassword && !secretsLoaded ? "已保存密码，留空表示不修改" : "密码直接显示，方便查看和复制；保存到磁盘时是加密的"}>
             <Input
+              mono={showPw}
               type={showPw ? "text" : "password"}
               value={f.password}
               onChange={(e) => set("password", e.target.value)}
-              placeholder={server?.hasPassword ? "••••••••（不修改）" : "输入密码"}
-              right={<IconButton size="sm" icon={showPw ? EyeOff : Eye} onClick={() => setShowPw((v) => !v)} />}
+              placeholder={server?.hasPassword && !secretsLoaded ? "••••••••（不修改）" : "输入密码"}
+              autoComplete="off"
+              className="pr-[68px]"
+              right={
+                <div className="flex items-center">
+                  <IconButton size="sm" icon={showPw ? EyeOff : Eye} tip={showPw ? "遮住" : "显示"} onClick={() => setShowPw((v) => !v)} />
+                  {f.password && <CopyButton text={f.password} tip="复制密码" />}
+                </div>
+              }
             />
           </Field>
         )}
@@ -493,22 +593,37 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
         </div>
 
         <button type="button" onClick={() => setAdvanced((v) => !v)} className="text-[12.5px] font-medium text-accent hover:underline">
-          {advanced ? "收起高级选项" : "高级选项：跳板机、sudo、备注"}
+          {advanced ? "收起高级选项" : "高级选项：跳板机 / 代理、sudo、备注"}
         </button>
         {advanced && (
           <div className="space-y-4 rounded-xl border border-line bg-bg2/40 p-4">
-            <Field label="跳板机" hint="通过另一台已添加的服务器中转连接（ProxyJump）">
-              <Select value={f.jumpServerId} onChange={(e) => set("jumpServerId", e.target.value)}>
-                <option value="">不使用跳板机</option>
-                {servers
-                  .filter((s) => s.id !== server?.id)
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}（{s.host}）
-                    </option>
-                  ))}
-              </Select>
+            <Field label="连接线路" hint={f.routeMode === "direct" ? "直接连接。只是偶尔连不上时不用改这里：在服务器卡片上点「换线路」可以临时经跳板机或代理连接。" : undefined}>
+              <Segmented
+                className="w-full [&>button]:flex-1 [&>button]:justify-center"
+                value={f.routeMode}
+                onChange={(v) => setF((x) => ({ ...x, routeMode: v, jumpServerId: v === "jump" ? x.jumpServerId || servers.find((s) => s.id !== server?.id)?.id || "" : x.jumpServerId }))}
+                options={[
+                  { value: "direct", label: "直连", icon: Plug },
+                  { value: "jump", label: "经跳板机", icon: Route },
+                  { value: "proxy", label: "经代理", icon: Globe },
+                ]}
+              />
             </Field>
+            {f.routeMode === "jump" && (
+              <Field label="跳板机" hint="通过另一台已添加的服务器中转连接（ProxyJump）">
+                <Select value={f.jumpServerId} onChange={(e) => set("jumpServerId", e.target.value)}>
+                  {servers.filter((s) => s.id !== server?.id).length === 0 && <option value="">（没有其他服务器）</option>}
+                  {servers
+                    .filter((s) => s.id !== server?.id)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}（{s.host}）
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+            )}
+            {f.routeMode === "proxy" && <ProxyFields value={f.proxy} onChange={(v) => set("proxy", v)} />}
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-[13px] font-medium">使用 sudo 执行特权操作</div>
@@ -517,8 +632,16 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
               <Switch checked={f.useSudo} onChange={(v) => set("useSudo", v)} />
             </div>
             {f.useSudo && (
-              <Field label="sudo 密码" hint={server?.hasSudoPassword ? "已保存，留空表示不修改" : "留空时使用登录密码，或要求 sudoers 配置 NOPASSWD"}>
-                <Input type="password" value={f.sudoPassword} onChange={(e) => set("sudoPassword", e.target.value)} placeholder={server?.hasSudoPassword ? "••••••••（不修改）" : "可选"} />
+              <Field label="sudo 密码" hint={server?.hasSudoPassword && !secretsLoaded ? "已保存，留空表示不修改" : "留空时使用登录密码，或要求 sudoers 配置 NOPASSWD"}>
+                <Input
+                  mono={showPw}
+                  type={showPw ? "text" : "password"}
+                  value={f.sudoPassword}
+                  onChange={(e) => set("sudoPassword", e.target.value)}
+                  placeholder={server?.hasSudoPassword && !secretsLoaded ? "••••••••（不修改）" : "可选"}
+                  autoComplete="off"
+                  right={f.sudoPassword ? <CopyButton text={f.sudoPassword} tip="复制 sudo 密码" /> : undefined}
+                />
               </Field>
             )}
             <Field label="备注" hint="备注会提供给 AI 助手作为环境信息">
@@ -565,8 +688,9 @@ function Gauge({ label, value, sub, icon: Icon }: { label: string; value: number
 }
 
 function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onClose: () => void; onEdit: (s: Server) => void }) {
-  const { status, openTerminal, loadServers, settings } = useApp();
+  const { status, servers, routes, openTerminal, openRoute, loadServers, settings } = useApp();
   const [tab, setTab] = useState<"info" | "keys" | "host">("info");
+  const [secrets, setSecrets] = useState<ServerSecrets | null>(null);
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [infoErr, setInfoErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -623,27 +747,47 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
       setAuthKeys([]);
     }
   };
+  // 只在换了一台服务器时重新加载：同一台服务器的信息更新（例如识别出了系统）不打断正在看的内容
   useEffect(() => {
     if (!server) return;
     setTab("info");
     setInfo(null);
     setAuthKeys(null);
+    setSecrets(null);
     void loadInfo(server);
-  }, [server]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server?.id]);
   useEffect(() => {
     if (server && tab === "keys" && authKeys === null) void loadKeys(server);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, server]);
+  }, [tab, server?.id]);
+  // 「连接信息」里直接显示保存的密码，方便复制
+  useEffect(() => {
+    if (!server || tab !== "host") return;
+    api
+      .GetServerSecrets(server.id)
+      .then(setSecrets)
+      .catch(() => setSecrets(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, server?.id, server?.updatedAt]);
   // 进程、失败服务、分区这些变化较慢的信息，每 30 秒在后台刷新一次
   useEffect(() => {
     if (!server || tab !== "info" || !monitorOn) return;
     const t = setInterval(() => void loadInfo(server, true), 30000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server, tab, monitorOn]);
+  }, [server?.id, tab, monitorOn]);
 
   if (!server) return null;
   const st = status[server.id];
+  const tempRoute = routes[server.id];
+  const savedRoute = server.jumpServerId ? `经跳板机 ${servers.find((x) => x.id === server.jumpServerId)?.name ?? "（已删除）"}` : server.proxy ? `经${proxyText(server.proxy)}` : "直连";
+  const secretRow = (value: string, tip: string) => (
+    <span className="inline-flex max-w-full items-center gap-1">
+      <span className="selectable min-w-0 font-mono text-[12px] break-all">{value}</span>
+      <CopyButton text={value} tip={tip} />
+    </span>
+  );
   const rootDisk = info?.disks.reduce((a, d) => (d.usePct > (a?.usePct ?? -1) ? d : a), undefined as ServerInfo["disks"][number] | undefined);
 
   return (
@@ -936,7 +1080,20 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
               <KV k="地址" v={`${server.host}:${server.port}`} mono />
               <KV k="用户" v={server.username} mono />
               <KV k="认证" v={server.authType === "key" ? "私钥" : "密码"} />
+              {secrets?.password && <KV k="登录密码" v={secretRow(secrets.password, "复制密码")} />}
               <KV k="sudo" v={server.useSudo ? "启用" : "未启用"} />
+              {server.useSudo && secrets?.sudoPassword && <KV k="sudo 密码" v={secretRow(secrets.sudoPassword, "复制 sudo 密码")} />}
+              <KV
+                k="线路"
+                v={
+                  <span className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                    {tempRoute ? <span className="text-warn">临时：{tempRoute.label}</span> : savedRoute}
+                    <button type="button" className="text-accent hover:underline" onClick={() => openRoute(server.id)}>
+                      更换
+                    </button>
+                  </span>
+                }
+              />
               <KV k="最近检测" v={st?.checkedAt ? `${timeAgo(st.checkedAt)}${st.status === "online" ? ` · ${st.latency} ms` : ""}` : "-"} />
               {st?.error && <KV k="错误" v={st.error} />}
             </Card>

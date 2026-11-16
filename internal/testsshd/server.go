@@ -33,7 +33,19 @@ type Server struct {
 	ln         net.Listener
 	mu         sync.Mutex
 	authorized map[string]bool
+	routes     map[string]string
 	bash       string
+}
+
+// Route 让经过这台服务器中转（跳板机）到 from（"主机:端口"）的连接实际连到 to：
+// 用来模拟“只有经过跳板机才能到达”的服务器。
+func (s *Server) Route(from, to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routes == nil {
+		s.routes = map[string]string{}
+	}
+	s.routes[from] = to
 }
 
 // FindBash 返回可用的 bash 路径（Windows 上使用 Git Bash）。
@@ -160,7 +172,13 @@ func (s *Server) handle(c net.Conn, cfg *ssh.ServerConfig) {
 				_ = nc.Reject(ssh.ConnectionFailed, "bad payload")
 				continue
 			}
-			target, err := net.Dial("tcp", net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port))))
+			addr := net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port)))
+			s.mu.Lock()
+			if to, ok := s.routes[addr]; ok {
+				addr = to
+			}
+			s.mu.Unlock()
+			target, err := net.Dial("tcp", addr)
 			if err != nil {
 				_ = nc.Reject(ssh.ConnectionFailed, err.Error())
 				continue

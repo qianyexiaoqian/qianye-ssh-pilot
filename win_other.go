@@ -19,3 +19,9 @@ func waitProcessExit(pid int) {
 		time.Sleep(time.Second)
 	}
 }
+
+func showProcessWindows(int, bool) {}
+
+func idleSeconds() int { return 0 }
+
+func systemProxy() (string, bool) { return "", false }

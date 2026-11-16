@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { on, type AgentEvent, type AutoSyncResult, type Sample, type ServerStatus, type Transfer } from "./lib/api";
+import { on, type AgentEvent, type AutoSyncResult, type LockState, type Sample, type ServerStatus, type Transfer } from "./lib/api";
 import { toast, useApp } from "./lib/store";
 import { dispatchAgentEvent, useAgent } from "./lib/agent";
 import { initFileDrop } from "./lib/drop";
@@ -10,6 +10,8 @@ import { CommandPalette, ConfirmHost, FilesTitleBar, Sidebar, TitleBar, Toaster 
 import { Button, Callout } from "./components/ui";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QuickHost } from "./components/QuickCommands";
+import { LockScreen } from "./components/LockScreen";
+import { RouteDialog } from "./components/RouteDialog";
 import Dashboard from "./pages/Dashboard";
 import Monitor from "./pages/Monitor";
 import Files from "./pages/Files";
@@ -26,24 +28,37 @@ import Brain from "./pages/Brain";
 import SettingsPage from "./pages/Settings";
 
 export default function App() {
-  const { theme, info, loadInfo } = useApp();
+  const { theme, info, lock, loadInfo, loadLock } = useApp();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
   useEffect(() => {
     void loadInfo();
+    void loadLock();
+    const offLock = on<LockState>("lock:changed", (l) => l && useApp.getState().setLock(l));
     // 主窗口和文件管理窗口共用界面偏好：在一个窗口里切换主题，其他窗口跟着切换
     const onStorage = (e: StorageEvent) => {
       if (e.key === "theme" && (e.newValue === "dark" || e.newValue === "light")) useApp.setState({ theme: e.newValue });
     };
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [loadInfo]);
+    return () => {
+      offLock();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [loadInfo, loadLock]);
 
   // 先确定当前窗口是主窗口还是某台服务器的文件管理窗口，再渲染对应的界面
-  if (!info) return <div className="h-full bg-bg" />;
-  return info.window === "files" ? <FilesApp serverId={info.windowServer} /> : <MainApp />;
+  if (!info || !lock) return <div className="h-full bg-bg" />;
+  // 设置了启动密码、还没有输入：只显示解锁页，主界面等解锁后再加载
+  if (lock.sealed) return <LockScreen />;
+  return (
+    <>
+      {info.window === "files" ? <FilesApp serverId={info.windowServer} /> : <MainApp />}
+      {/* 运行中锁定：主界面留在下面（终端继续运行），由锁屏盖住 */}
+      {lock.locked && <LockScreen />}
+    </>
+  );
 }
 
 /** 文件管理独立窗口：只有标题栏和一台服务器的文件管理 */
@@ -91,7 +106,7 @@ function FilesApp({ serverId }: { serverId: string }) {
 }
 
 function MainApp() {
-  const { page, info, go, loadServers, loadKeys, loadSettings, setStatus } = useApp();
+  const { page, info, go, loadServers, loadKeys, loadSettings, loadRoutes, setStatus } = useApp();
   const [palette, setPalette] = useState(false);
   // 这次启动时刚把旧版本的数据搬到了程序目录：提示一次
   const [migrationSeen, setMigrationSeen] = useState(false);
@@ -100,11 +115,20 @@ function MainApp() {
     void loadServers();
     void loadKeys();
     void loadSettings();
+    void loadRoutes();
     void useAgent.getState().loadSessions();
     void useQuick.getState().load();
     initFileDrop(() => toast.info("文件要拖到文件管理窗口里", "在终端工具栏点「文件」，或从侧栏的「文件管理」打开服务器的文件管理窗口，把文件或文件夹拖进去就能上传。"));
     const offs = [
       on<Record<string, ServerStatus>>("servers:status", (s) => setStatus(s ?? {})),
+      // 连上服务器后识别出了系统名称等
+      on("servers:changed", () => void loadServers()),
+      // 临时线路变化；带着服务器 ID 表示它的连接都断开了，临时线路自动取消
+      on<string>("routes:changed", (cleared) => {
+        void loadRoutes();
+        const name = cleared && useApp.getState().servers.find((s) => s.id === cleared)?.name;
+        if (name) toast.info(`${name} 的临时线路已取消`, "通过它打开的连接都已断开，之后恢复使用服务器保存的线路。");
+      }),
       on<AgentEvent>("agent:event", dispatchAgentEvent),
       on<Sample>("monitor:sample", (s) => useMonitor.getState().push(s)),
       on<{ count: number; score: number; titles: string[] }>("inspect:alert", (a) => toast.warn(`自动巡检发现 ${a.count} 个新的严重问题`, (a.titles ?? []).join("；"))),
@@ -115,6 +139,7 @@ function MainApp() {
       }),
     ];
     const onKey = (e: KeyboardEvent) => {
+      if (useApp.getState().lock?.locked) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((v) => !v);
@@ -125,7 +150,7 @@ function MainApp() {
       offs.forEach((f) => f());
       window.removeEventListener("keydown", onKey);
     };
-  }, [loadServers, loadKeys, loadSettings, setStatus]);
+  }, [loadServers, loadKeys, loadSettings, loadRoutes, setStatus]);
 
   return (
     <div className="flex h-full flex-col">
@@ -217,6 +242,7 @@ function MainApp() {
       </div>
       <Toaster />
       <QuickHost />
+      <RouteDialog />
       <ConfirmHost />
       <CommandPalette open={palette} onClose={() => setPalette(false)} />
     </div>

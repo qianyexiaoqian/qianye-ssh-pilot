@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +43,16 @@ func TestDemoEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := a.SaveServer(ServerInput{Name: "staging-01", Host: "127.0.0.1", Port: 1, Username: "root", AuthType: "password", Password: "x", Group: "测试"}); err != nil {
+		t.Fatal(err)
+	}
+	// intranet-01 直连连不上（端口上没有服务），只有经 web-01 中转或经代理才能到达：用于验收「换线路」。
+	// SOCKS5 代理不需要认证，HTTP 代理需要用户名和密码（ops / proxy-pass），端口写在 ready 文件里。
+	hiddenPort := deadPort(t)
+	hidden := net.JoinHostPort("127.0.0.1", strconv.Itoa(hiddenPort))
+	web.Route(hidden, db.Addr)
+	socks := testsshd.StartSOCKS5(t, testsshd.ProxyOptions{Routes: map[string]string{hidden: db.Addr}})
+	httpProxy := testsshd.StartHTTPProxy(t, testsshd.ProxyOptions{User: "ops", Pass: "proxy-pass", Routes: map[string]string{hidden: db.Addr}})
+	if _, err := a.SaveServer(ServerInput{Name: "intranet-01", Host: "127.0.0.1", Port: hiddenPort, Username: db.User, AuthType: "password", Password: db.Password, Group: "内网"}); err != nil {
 		t.Fatal(err)
 	}
 	// 在 web-01 的主目录里放一些文件，用于验收文件管理
@@ -138,7 +151,7 @@ func TestDemoEnvironment(t *testing.T) {
 	_ = a.ArchiveSkill("legacy-ftp-sync")
 	a.agent.StartIndexing()
 	t.Logf("demo data ready in %s", dir)
-	_ = os.WriteFile(filepath.Join(dir, "ready"), []byte("ok"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "ready"), fmt.Appendf(nil, `{"socks5":%d,"http":%d,"httpUser":"ops","httpPass":"proxy-pass"}`, socks.Port, httpProxy.Port), 0o600)
 	deadline := time.Now().Add(55 * time.Minute)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(filepath.Join(dir, "stop")); err == nil {

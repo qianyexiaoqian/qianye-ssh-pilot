@@ -62,6 +62,10 @@ export function ClearInspection() {
   return window['go']['main']['App']['ClearInspection']();
 }
 
+export function ClearTempRoute(arg1) {
+  return window['go']['main']['App']['ClearTempRoute'](arg1);
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
@@ -108,6 +112,10 @@ export function DeleteTarget(arg1) {
 
 export function DeployCert(arg1, arg2) {
   return window['go']['main']['App']['DeployCert'](arg1, arg2);
+}
+
+export function DetectLocalProxy() {
+  return window['go']['main']['App']['DetectLocalProxy']();
 }
 
 export function DiscoverCerts(arg1) {
@@ -222,6 +230,10 @@ export function GetLearningLog(arg1) {
   return window['go']['main']['App']['GetLearningLog'](arg1);
 }
 
+export function GetLockState() {
+  return window['go']['main']['App']['GetLockState']();
+}
+
 export function GetMemory() {
   return window['go']['main']['App']['GetMemory']();
 }
@@ -236,6 +248,10 @@ export function GetRun(arg1) {
 
 export function GetServerInfo(arg1) {
   return window['go']['main']['App']['GetServerInfo'](arg1);
+}
+
+export function GetServerSecrets(arg1) {
+  return window['go']['main']['App']['GetServerSecrets'](arg1);
 }
 
 export function GetSettings() {
@@ -314,6 +330,14 @@ export function ListSkills() {
   return window['go']['main']['App']['ListSkills']();
 }
 
+export function ListTempRoutes() {
+  return window['go']['main']['App']['ListTempRoutes']();
+}
+
+export function LockNow() {
+  return window['go']['main']['App']['LockNow']();
+}
+
 export function MonitorRetry(arg1) {
   return window['go']['main']['App']['MonitorRetry'](arg1);
 }
@@ -378,6 +402,10 @@ export function RemoveAuthorizedKey(arg1, arg2) {
   return window['go']['main']['App']['RemoveAuthorizedKey'](arg1, arg2);
 }
 
+export function RemoveLockPassword(arg1) {
+  return window['go']['main']['App']['RemoveLockPassword'](arg1);
+}
+
 export function RenameKey(arg1, arg2) {
   return window['go']['main']['App']['RenameKey'](arg1, arg2);
 }
@@ -388,6 +416,10 @@ export function RenamePublicKey(arg1, arg2) {
 
 export function ReorderQuickCommands(arg1) {
   return window['go']['main']['App']['ReorderQuickCommands'](arg1);
+}
+
+export function ResetLock() {
+  return window['go']['main']['App']['ResetLock']();
 }
 
 export function RestoreSkill(arg1) {
@@ -434,6 +466,10 @@ export function SaveServer(arg1) {
   return window['go']['main']['App']['SaveServer'](arg1);
 }
 
+export function SaveServerRoute(arg1, arg2) {
+  return window['go']['main']['App']['SaveServerRoute'](arg1, arg2);
+}
+
 export function SaveSettings(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveSettings'](arg1, arg2, arg3);
 }
@@ -466,6 +502,10 @@ export function ServiceStatus(arg1, arg2) {
   return window['go']['main']['App']['ServiceStatus'](arg1, arg2);
 }
 
+export function SetAutoLock(arg1) {
+  return window['go']['main']['App']['SetAutoLock'](arg1);
+}
+
 export function SetCertAutoSync(arg1, arg2) {
   return window['go']['main']['App']['SetCertAutoSync'](arg1, arg2);
 }
@@ -474,8 +514,16 @@ export function SetInspectInterval(arg1) {
   return window['go']['main']['App']['SetInspectInterval'](arg1);
 }
 
+export function SetLockPassword(arg1, arg2) {
+  return window['go']['main']['App']['SetLockPassword'](arg1, arg2);
+}
+
 export function SetMonitor(arg1, arg2) {
   return window['go']['main']['App']['SetMonitor'](arg1, arg2);
+}
+
+export function SetTempRoute(arg1, arg2) {
+  return window['go']['main']['App']['SetTempRoute'](arg1, arg2);
 }
 
 export function SyncCertNow(arg1) {
@@ -502,6 +550,10 @@ export function TestEmbedding() {
   return window['go']['main']['App']['TestEmbedding']();
 }
 
+export function TestRoute(arg1, arg2) {
+  return window['go']['main']['App']['TestRoute'](arg1, arg2);
+}
+
 export function TestServer(arg1) {
   return window['go']['main']['App']['TestServer'](arg1);
 }
@@ -516,6 +568,10 @@ export function TrustHostKey(arg1) {
 
 export function UnbindPublicKey(arg1, arg2) {
   return window['go']['main']['App']['UnbindPublicKey'](arg1, arg2);
+}
+
+export function Unlock(arg1) {
+  return window['go']['main']['App']['Unlock'](arg1);
 }
 
 export function UpdateCertMeta(arg1, arg2, arg3) {

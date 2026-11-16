@@ -146,3 +146,9 @@ internal/agent            智能体循环、Claude / OpenAI 兼容接入、核�
 internal/testsshd         测试用 SSH 服务器
 frontend/                 React 19 + Tailwind CSS 4 + xterm.js + CodeMirror
 ```
+
+## 许可证
+
+[MIT](LICENSE) © 2026 Qian Ye。可以自由使用、修改和再分发（包括商用），只需保留版权声明和许可证文本；软件按现状提供，不附带任何担保。
+
+依赖的第三方库各自遵循它们自己的许可证。

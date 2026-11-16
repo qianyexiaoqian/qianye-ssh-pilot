@@ -1,0 +1,4 @@
+# 源码统一用 LF 换行（gofmt 也是按 LF 检查的），不随操作系统变化
+* text=auto eol=lf
+*.png binary
+*.ico binary

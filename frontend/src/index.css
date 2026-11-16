@@ -1,0 +1,352 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* 由变量拼接的状态色类名 */
+@source inline("text-{ok,warn,bad,info,serious,accent} bg-{ok,warn,bad,info,serious,accent}/{10,12,15}");
+
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Microsoft YaHei UI", monospace;
+
+  --color-bg: var(--c-bg);
+  --color-bg2: var(--c-bg2);
+  --color-panel: var(--c-panel);
+  --color-panel2: var(--c-panel2);
+  --color-panel3: var(--c-panel3);
+  --color-line: var(--c-line);
+  --color-line2: var(--c-line2);
+  --color-fg: var(--c-fg);
+  --color-fg2: var(--c-fg2);
+  --color-muted: var(--c-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-fg: var(--c-accent-fg);
+  --color-cyan: var(--c-cyan);
+  /* 状态色：固定语义，始终搭配图标与文字 */
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+  --color-serious: var(--c-serious);
+  --color-bad: var(--c-bad);
+  --color-info: var(--c-info);
+
+  --animate-fade-in: fade-in 0.18s ease-out;
+  --animate-pop: pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  --animate-slide-up: slide-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-slide-left: slide-left 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-left {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+:root,
+[data-theme="dark"] {
+  --c-bg: #0b0c11;
+  --c-bg2: #0f1118;
+  --c-panel: #13151d;
+  --c-panel2: #191c26;
+  --c-panel3: #20242f;
+  --c-line: rgba(255, 255, 255, 0.065);
+  --c-line2: rgba(255, 255, 255, 0.11);
+  --c-fg: #e8eaf1;
+  --c-fg2: #b6bbca;
+  --c-muted: #7d8398;
+  --c-accent: #7c6cff;
+  --c-accent-fg: #ffffff;
+  --c-cyan: #22d3ee;
+  --c-ok: #0ca30c;
+  --c-warn: #fab219;
+  --c-serious: #ec835a;
+  --c-bad: #e5484d;
+  --c-info: #5b9cff;
+  /* 图表系列色：按固定顺序使用，已用 dataviz 校验脚本验证（明度、色弱区分度、对比度） */
+  --c-series-1: #7c6cff;
+  --c-series-2: #12a0b8;
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --glow: 0 0 0 1px rgba(124, 108, 255, 0.35), 0 8px 30px -8px rgba(124, 108, 255, 0.45);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --c-bg: #f4f5f9;
+  --c-bg2: #eceef4;
+  --c-panel: #ffffff;
+  --c-panel2: #f4f5f9;
+  --c-panel3: #eaecf2;
+  --c-line: rgba(15, 23, 42, 0.08);
+  --c-line2: rgba(15, 23, 42, 0.14);
+  --c-fg: #0f172a;
+  --c-fg2: #334155;
+  --c-muted: #64748b;
+  --c-accent: #6553f5;
+  --c-accent-fg: #ffffff;
+  --c-cyan: #0891b2;
+  --c-ok: #0b8a0b;
+  --c-warn: #c98a06;
+  --c-serious: #d4693f;
+  --c-bad: #d03b3b;
+  --c-info: #2563eb;
+  --c-series-1: #6553f5;
+  --c-series-2: #0891b2;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px -16px rgba(15, 23, 42, 0.18);
+  --glow: 0 0 0 1px rgba(101, 83, 245, 0.3), 0 8px 30px -10px rgba(101, 83, 245, 0.35);
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-fg);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+select,
+[contenteditable],
+.selectable,
+.prose-chat,
+pre,
+code {
+  user-select: text;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--c-accent) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--c-fg) 16%, transparent) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--c-fg) 14%, transparent);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--c-fg) 24%, transparent);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+button {
+  cursor: default;
+}
+
+/* 自定义提示气泡：data-tip="..." */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--c-fg);
+  background: var(--c-panel3);
+  border: 1px solid var(--c-line2);
+  box-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 60;
+  animation: fade-in 0.12s ease-out;
+}
+[data-tip-pos="bottom"]:hover::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+[data-tip-pos="right"]:hover::after {
+  left: calc(100% + 8px);
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.drag {
+  --wails-draggable: drag;
+}
+.no-drag {
+  --wails-draggable: no-drag;
+}
+
+.glass {
+  background: color-mix(in oklab, var(--c-panel) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.card {
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.grad-text {
+  background: linear-gradient(120deg, #a594ff 0%, #7c6cff 45%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.grad-accent {
+  background: linear-gradient(135deg, #8b7bff 0%, #6a5af9 50%, #2bb8e6 120%);
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, color-mix(in oklab, var(--c-fg) 8%, transparent) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--c-fg) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--c-fg) 4%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* 聊天消息中的 Markdown */
+.prose-chat {
+  line-height: 1.7;
+  font-size: 13.5px;
+  color: var(--c-fg);
+  word-break: break-word;
+}
+.prose-chat > *:first-child {
+  margin-top: 0;
+}
+.prose-chat > *:last-child {
+  margin-bottom: 0;
+}
+.prose-chat p {
+  margin: 0.45em 0;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  margin: 0.9em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.prose-chat h1 { font-size: 1.25em; }
+.prose-chat h2 { font-size: 1.15em; }
+.prose-chat h3 { font-size: 1.05em; }
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.prose-chat ul { list-style: disc; }
+.prose-chat ol { list-style: decimal; }
+.prose-chat li { margin: 0.2em 0; }
+.prose-chat li::marker { color: var(--c-muted); }
+.prose-chat a {
+  color: var(--c-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat strong { font-weight: 600; color: var(--c-fg); }
+.prose-chat blockquote {
+  margin: 0.6em 0;
+  padding: 0.2em 0.9em;
+  border-left: 3px solid var(--c-line2);
+  color: var(--c-fg2);
+}
+.prose-chat :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.12em 0.4em;
+  border-radius: 5px;
+  background: var(--c-panel3);
+  border: 1px solid var(--c-line);
+}
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.95em;
+  display: block;
+  overflow-x: auto;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--c-line2);
+  padding: 0.35em 0.7em;
+  text-align: left;
+}
+.prose-chat th {
+  background: var(--c-panel2);
+  font-weight: 600;
+}
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid var(--c-line2);
+  margin: 1em 0;
+}
+
+/* xterm 容器 */
+.xterm-host .xterm {
+  height: 100%;
+  padding: 10px 0 6px 12px;
+}
+.xterm-host .xterm-viewport {
+  background: transparent !important;
+}
+.xterm-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+/* CodeMirror */
+.cm-host .cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+.cm-host .cm-editor.cm-focused {
+  outline: none;
+}
+.cm-host .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}

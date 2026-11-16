@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "QianYe SSH Pilot",
+  "outputfilename": "QianYeSSHPilot",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Qian Ye"
+  },
+  "info": {
+    "companyName": "Qian Ye",
+    "productName": "QianYe SSH Pilot",
+    "productVersion": "1.4.0",
+    "copyright": "Copyright © 2026 Qian Ye",
+    "comments": "SSH 服务器 · 证书 · 智能运维管家"
+  }
+}

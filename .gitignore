@@ -1,0 +1,10 @@
+build/bin/
+frontend/node_modules/
+frontend/dist/
+*.exe
+frontend/package.json.md5
+
+# 运行时产生的数据与导出的备份（里面有服务器、密钥等敏感内容），永远不要提交
+data/
+backup/
+*.spbak

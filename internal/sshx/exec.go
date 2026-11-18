@@ -72,6 +72,9 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 }
 
 func (w *captureWriter) String() string {
+	// 命令被取消、连接又没有回应时，读取输出的协程可能还在往里写
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	s := strings.ToValidUTF8(w.buf.String(), "")
 	if w.over {
 		s += "\n…（输出过长，已截断）"
@@ -121,11 +124,12 @@ func (p *Pool) Exec(ctx context.Context, serverID, command string, opt ExecOptio
 			}
 		}
 	}
-	return run(ctx, sess, cmd, stdin, opt)
+	return run(ctx, c, sess, cmd, stdin, opt)
 }
 
-func run(ctx context.Context, sess *ssh.Session, cmd string, stdin io.Reader, opt ExecOptions) (*ExecResult, error) {
-	defer sess.Close()
+func run(ctx context.Context, c *Client, sess *ssh.Session, cmd string, stdin io.Reader, opt ExecOptions) (*ExecResult, error) {
+	// 关闭会话要给服务器发消息：连接没有回应时不让它拖住调用方
+	defer func() { go sess.Close() }()
 	maxCap := opt.MaxCapture
 	if maxCap <= 0 {
 		maxCap = 2 << 20
@@ -143,7 +147,10 @@ func run(ctx context.Context, sess *ssh.Session, cmd string, stdin io.Reader, op
 		timeout = 2 * time.Minute
 	}
 	start := time.Now()
-	if err := sess.Start(cmd); err != nil {
+	if _, err := await(ctx, c, func() (struct{}, error) { return struct{}{}, sess.Start(cmd) }, nil); err != nil {
+		if errors.Is(err, ErrNoReply) || ctx.Err() != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("启动命令失败: %w", err)
 	}
 	done := make(chan error, 1)
@@ -151,23 +158,53 @@ func run(ctx context.Context, sess *ssh.Session, cmd string, stdin io.Reader, op
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
+	// stop 结束还在运行的命令：让服务器杀掉它并关闭会话，等它收尾。等不到（连接已经没有回应）就把连接关掉，
+	// 不再等下去——否则“超时”和“停止”在一条断掉的连接上都不起作用。
+	stop := func() {
+		go func() {
+			_ = sess.Signal(ssh.SIGKILL)
+			sess.Close()
+		}()
+		grace := time.NewTimer(StopGrace)
+		defer grace.Stop()
+		select {
+		case <-done:
+		case <-grace.C:
+			// 等不到会话收尾。连接上已经什么数据都收不到了：它多半已经失效，关掉；
+			// 还在收到数据说明服务器只是慢，连接留着，只是不再等这一个会话
+			if c.quietFor() >= StopGrace {
+				c.Close()
+				select {
+				case <-done:
+				case <-time.After(StopGrace):
+				}
+			}
+		}
+	}
 	var err error
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		_ = sess.Signal(ssh.SIGKILL)
-		sess.Close()
-		<-done
+		stop()
 		err = errors.New("已取消")
 	case <-timer.C:
-		_ = sess.Signal(ssh.SIGKILL)
-		sess.Close()
-		<-done
+		stop()
 		err = fmt.Errorf("执行超时（%s）", timeout)
+	case <-c.done:
+		// 连接断了（保活没有回应，或者被别处关闭）
+		select {
+		case err = <-done:
+		case <-time.After(StopGrace):
+			err = ErrNoReply
+		}
 	}
 	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String(), Duration: time.Since(start)}
 	var exitErr *ssh.ExitError
 	var missing *ssh.ExitMissingError
+	// 没等到命令的退出状态、连接又已经断开：命令多半没有执行完，不能当作“执行了，只是没有退出码”
+	if errors.As(err, &missing) && c.Closed() {
+		err = errors.New("连接中断，命令可能没有执行完")
+	}
 	switch {
 	case err == nil:
 	case errors.As(err, &exitErr):
@@ -249,9 +286,9 @@ func (p *Pool) runScriptOnce(ctx context.Context, serverID, content, interp, env
 		prefix, pw := sudoPrefix(c.Endpoint())
 		b64 := base64.StdEncoding.EncodeToString([]byte(content))
 		cmd := fmt.Sprintf(`%s%s%s -c "$(echo '%s' | base64 -d)"`, prefix, env, bin, b64)
-		return run(ctx, sess, cmd, pw, opt)
+		return run(ctx, c, sess, cmd, pw, opt)
 	}
-	return run(ctx, sess, env+bin+" "+flag, strings.NewReader(content), opt)
+	return run(ctx, c, sess, env+bin+" "+flag, strings.NewReader(content), opt)
 }
 
 // ReadFile 读取远程文件（最多 maxBytes 字节）。

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -54,6 +55,7 @@ func (a *App) certView(d *store.Data, c *store.Certificate) CertView {
 	return v
 }
 
+// ListCerts 按保存的顺序返回全部证书（顺序可以在界面上拖动调整，见 ReorderCerts）。
 func (a *App) ListCerts() []CertView {
 	out := []CertView{}
 	a.store.Read(func(d *store.Data) {
@@ -61,8 +63,127 @@ func (a *App) ListCerts() []CertView {
 			out = append(out, a.certView(d, c))
 		}
 	})
-	slices.SortFunc(out, func(x, y CertView) int { return int(x.NotAfter/1000 - y.NotAfter/1000) })
 	return out
+}
+
+// ---- 分组与排序 ----
+
+// maxCertGroupName 是分组名称的长度上限（按字符算）。
+const maxCertGroupName = 30
+
+func cleanGroupName(name string) (string, error) {
+	name = strings.Join(strings.Fields(name), " ")
+	if utf8.RuneCountInString(name) > maxCertGroupName {
+		return "", fmt.Errorf("分组名称太长了（最多 %d 个字）", maxCertGroupName)
+	}
+	return name, nil
+}
+
+// ListCertGroups 按顺序返回证书的分组（只包含里面有证书的分组）。
+func (a *App) ListCertGroups() []string {
+	out := []string{}
+	a.store.Read(func(d *store.Data) { out = append(out, d.CertGroups...) })
+	return out
+}
+
+// SetCertGroup 把证书放进一个分组；group 为空表示移出分组。分组不存在时新建，排在最后。
+func (a *App) SetCertGroup(ids []string, group string) error {
+	group, err := cleanGroupName(group)
+	if err != nil {
+		return err
+	}
+	return a.store.Update(func(d *store.Data) error {
+		for _, id := range ids {
+			c := d.Cert(id)
+			if c == nil {
+				return errors.New("证书不存在")
+			}
+			c.Group = group
+		}
+		d.TidyCertGroups()
+		return nil
+	})
+}
+
+// SaveCertGroup 新建或修改一个分组：分组叫 name，里面正好是 ids 这些证书。
+// old 是修改前的名称（新建时为空）：改名后分组留在原来的位置，原来在这个分组里、这次没有选上的证书移出分组。
+// ids 为空表示解散这个分组。
+func (a *App) SaveCertGroup(old, name string, ids []string) error {
+	name, err := cleanGroupName(name)
+	if err != nil {
+		return err
+	}
+	if name == "" && len(ids) > 0 {
+		return errors.New("请填写分组名称")
+	}
+	return a.store.Update(func(d *store.Data) error {
+		if old != name && name != "" && slices.Contains(d.CertGroups, name) {
+			return fmt.Errorf("已经有一个叫「%s」的分组了", name)
+		}
+		for _, id := range ids {
+			if d.Cert(id) == nil {
+				return errors.New("证书不存在")
+			}
+		}
+		for _, c := range d.Certs {
+			switch {
+			case slices.Contains(ids, c.ID):
+				c.Group = name
+			case old != "" && c.Group == old:
+				c.Group = ""
+			}
+		}
+		// 改名的分组留在原来的位置
+		if i := slices.Index(d.CertGroups, old); old != "" && i >= 0 && name != "" {
+			d.CertGroups[i] = name
+		}
+		d.TidyCertGroups()
+		return nil
+	})
+}
+
+// reorderInPlace 把 listed 选中的元素按 order 给出的顺序，重新排进它们现在占着的那几个位置，其余元素不动。
+func reorderInPlace[T any](items []T, order []T, listed func(T) bool) {
+	next := 0
+	for i, it := range items {
+		if listed(it) && next < len(order) {
+			items[i] = order[next]
+			next++
+		}
+	}
+}
+
+// ReorderCerts 调整证书的先后顺序：ids 里的证书按给出的顺序排进它们现在占着的位置，没有列出的不动。
+// 在一个分组里拖动，只影响这个分组里的证书之间的顺序。
+func (a *App) ReorderCerts(ids []string) error {
+	return a.store.Update(func(d *store.Data) error {
+		var order []*store.Certificate
+		listed := map[string]bool{}
+		for _, id := range ids {
+			if c := d.Cert(id); c != nil && !listed[id] {
+				listed[id] = true
+				order = append(order, c)
+			}
+		}
+		reorderInPlace(d.Certs, order, func(c *store.Certificate) bool { return listed[c.ID] })
+		return nil
+	})
+}
+
+// ReorderCertGroups 调整分组的先后顺序，规则同 ReorderCerts。
+func (a *App) ReorderCertGroups(names []string) error {
+	return a.store.Update(func(d *store.Data) error {
+		var order []string
+		listed := map[string]bool{}
+		for _, n := range names {
+			if slices.Contains(d.CertGroups, n) && !listed[n] {
+				listed[n] = true
+				order = append(order, n)
+			}
+		}
+		reorderInPlace(d.CertGroups, order, func(n string) bool { return listed[n] })
+		return nil
+	})
 }
 
 func (a *App) GetCert(id string) (CertView, error) {
@@ -91,6 +212,8 @@ type ImportCertRequest struct {
 	KeyPEM   string `json:"keyPem"`
 	ChainPEM string `json:"chainPem"`
 	Notes    string `json:"notes"`
+	// Group 是新证书放进的分组（可以不填）；替换已有证书时不改变它的分组
+	Group string `json:"group"`
 }
 
 func (a *App) saveParsed(id, name, notes string, p *certs.Parsed, src *store.CertSource) (CertView, error) {
@@ -155,7 +278,19 @@ func (a *App) ImportCert(req ImportCertRequest) (CertView, error) {
 	if err != nil {
 		return CertView{}, err
 	}
-	return a.saveParsed(req.ID, req.Name, req.Notes, p, nil)
+	v, err := a.saveParsed(req.ID, req.Name, req.Notes, p, nil)
+	return a.groupNew(v, err, req.ID, req.Group)
+}
+
+// groupNew 把刚导入的新证书放进指定的分组（替换已有证书时不动它的分组）。
+func (a *App) groupNew(v CertView, err error, replacedID, group string) (CertView, error) {
+	if err != nil || replacedID != "" || strings.TrimSpace(group) == "" {
+		return v, err
+	}
+	if err := a.SetCertGroup([]string{v.ID}, group); err != nil {
+		return v, err
+	}
+	return a.GetCert(v.ID)
 }
 
 type PullCertRequest struct {
@@ -165,6 +300,7 @@ type PullCertRequest struct {
 	KeyPath   string `json:"keyPath"`
 	ChainPath string `json:"chainPath"`
 	Name      string `json:"name"`
+	Group     string `json:"group"`
 }
 
 // PullCert 从服务器拉取证书（例如 certbot 所在的服务器），记录来源以便日后一键刷新。
@@ -176,7 +312,8 @@ func (a *App) PullCert(req PullCertRequest) (CertView, error) {
 	if err != nil {
 		return CertView{}, err
 	}
-	return a.saveParsed(req.CertID, req.Name, "", p, src)
+	v, err := a.saveParsed(req.CertID, req.Name, "", p, src)
+	return a.groupNew(v, err, req.CertID, req.Group)
 }
 
 type RefreshResult struct {
@@ -259,6 +396,7 @@ func (a *App) DeleteCert(id string) error {
 		}
 		d.Certs = slices.DeleteFunc(d.Certs, func(c *store.Certificate) bool { return c.ID == id })
 		d.Targets = slices.DeleteFunc(d.Targets, func(t *store.DeployTarget) bool { return t.CertID == id })
+		d.TidyCertGroups()
 		return nil
 	})
 }

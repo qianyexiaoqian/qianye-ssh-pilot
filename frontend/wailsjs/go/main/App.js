@@ -302,6 +302,10 @@ export function ListArchivedSkills() {
   return window['go']['main']['App']['ListArchivedSkills']();
 }
 
+export function ListCertGroups() {
+  return window['go']['main']['App']['ListCertGroups']();
+}
+
 export function ListCerts() {
   return window['go']['main']['App']['ListCerts']();
 }
@@ -430,6 +434,14 @@ export function RenamePublicKey(arg1, arg2) {
   return window['go']['main']['App']['RenamePublicKey'](arg1, arg2);
 }
 
+export function ReorderCertGroups(arg1) {
+  return window['go']['main']['App']['ReorderCertGroups'](arg1);
+}
+
+export function ReorderCerts(arg1) {
+  return window['go']['main']['App']['ReorderCerts'](arg1);
+}
+
 export function ReorderQuickCommands(arg1) {
   return window['go']['main']['App']['ReorderQuickCommands'](arg1);
 }
@@ -460,6 +472,10 @@ export function RunInspection(arg1) {
 
 export function RunScript(arg1) {
   return window['go']['main']['App']['RunScript'](arg1);
+}
+
+export function SaveCertGroup(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveCertGroup'](arg1, arg2, arg3);
 }
 
 export function SaveEmbedKey(arg1, arg2) {
@@ -528,6 +544,10 @@ export function SetAutoLock(arg1) {
 
 export function SetCertAutoSync(arg1, arg2) {
   return window['go']['main']['App']['SetCertAutoSync'](arg1, arg2);
+}
+
+export function SetCertGroup(arg1, arg2) {
+  return window['go']['main']['App']['SetCertGroup'](arg1, arg2);
 }
 
 export function SetInspectInterval(arg1) {

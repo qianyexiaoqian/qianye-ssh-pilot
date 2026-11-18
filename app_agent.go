@@ -22,6 +22,9 @@ type SessionView struct {
 	ApproveAll   bool                    `json:"approveAll"`
 	Learned      int                     `json:"learned"`
 	ServerID     string                  `json:"serverId"`
+	// ActiveTool 是正在执行的工具调用（没有时为空），ActiveSince 是它开始的时间
+	ActiveTool  string `json:"activeTool"`
+	ActiveSince int64  `json:"activeSince"`
 }
 
 func (a *App) AgentListSessions() []agent.SessionSummary { return a.agent.ListSessions() }
@@ -53,9 +56,11 @@ func (a *App) AgentGetSession(id string) (SessionView, error) {
 		m.Blocks = nil // 原生内容块只用于回放，不需要发送给界面
 		msgs[i] = m
 	}
+	tool, since := a.agent.ActiveTool(id)
 	return SessionView{ID: s.ID, Title: s.Title, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, Messages: msgs,
 		Running: a.agent.IsRunning(id), Pending: a.agent.PendingApprovals(id), InputTokens: s.InputTokens,
-		OutputTokens: s.OutputTokens, ApproveAll: s.ApproveAll, Learned: s.Learned, ServerID: s.ServerID}, nil
+		OutputTokens: s.OutputTokens, ApproveAll: s.ApproveAll, Learned: s.Learned, ServerID: s.ServerID,
+		ActiveTool: tool, ActiveSince: since}, nil
 }
 
 // AgentSend 发送一条消息；attachments 是随消息发送的附件 ID（先用 AgentPickFiles 等添加）。

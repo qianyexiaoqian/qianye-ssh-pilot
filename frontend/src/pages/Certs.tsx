@@ -8,6 +8,7 @@ import {
   Download,
   Ellipsis,
   FolderOpen,
+  FolderPlus,
   Globe,
   History,
   LoaderCircle,
@@ -28,6 +29,7 @@ import { certTone, cn, formatDate, timeAgo } from "../lib/format";
 import { confirm, toast, useApp } from "../lib/store";
 import { Badge, Button, Callout, Card, CopyButton, Empty, Field, IconButton, Input, Menu, Meter, Modal, Segmented, Select, Spinner, Switch, TagInput, Textarea } from "../components/ui";
 import { KV, ServerPicker, useMask } from "../components/widgets";
+import { CertGroupModal, CertList } from "../components/CertList";
 
 function DaysBadge({ days }: { days: number }) {
   const tone = certTone(days);
@@ -42,17 +44,24 @@ function DaysBadge({ days }: { days: number }) {
 export default function Certs() {
   const { params } = useApp();
   const [certs, setCerts] = useState<CertView[]>([]);
+  // 分组的先后顺序（只包含里面有证书的分组）
+  const [groups, setGroups] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [importMode, setImportMode] = useState<{ replace?: CertView } | null>(null);
+  // 正在新建（空字符串）或修改的分组；null 表示对话框没有打开
+  const [groupEdit, setGroupEdit] = useState<string | null>(null);
+  // 从别处跳转过来要看的证书，或者刚刚放进某个分组的证书：它所在的分组自动展开
+  const [reveal, setReveal] = useState<string | null>(null);
 
   const load = async () => {
-    const list = (await api.ListCerts()) ?? [];
-    setCerts(list);
+    const [list, names] = await Promise.all([api.ListCerts(), api.ListCertGroups()]);
+    setCerts(list ?? []);
+    setGroups(names ?? []);
     setLoaded(true);
-    setSel((cur) => (cur && list.some((c) => c.id === cur) ? cur : list[0]?.id ?? null));
-    return list;
+    setSel((cur) => (cur && (list ?? []).some((c) => c.id === cur) ? cur : (list ?? [])[0]?.id ?? null));
+    return list ?? [];
   };
   useEffect(() => {
     void load();
@@ -60,11 +69,13 @@ export default function Certs() {
     return on("certs:changed", () => void load());
   }, []);
   useEffect(() => {
-    if (params.certId) setSel(params.certId);
+    if (params.certId) {
+      setSel(params.certId);
+      setReveal(params.certId);
+    }
     if (params.import) setImportMode({});
   }, [params]);
 
-  const list = certs.filter((c) => (c.name + c.domains.join(" ") + c.issuer).toLowerCase().includes(q.toLowerCase()));
   const cur = certs.find((c) => c.id === sel) ?? null;
 
   return (
@@ -73,41 +84,40 @@ export default function Certs() {
         <div className="space-y-2.5 p-4 pb-3">
           <div className="flex items-center justify-between">
             <h1 className="text-[16px] font-semibold">证书中心</h1>
-            <Button size="sm" variant="primary" icon={Plus} onClick={() => setImportMode({})}>
-              导入证书
-            </Button>
+            <div className="flex items-center gap-1">
+              {certs.length > 0 && <IconButton icon={FolderPlus} tip="新建分组" tipPos="bottom" onClick={() => setGroupEdit("")} data-new-group />}
+              <Button size="sm" variant="primary" icon={Plus} onClick={() => setImportMode({})}>
+                导入证书
+              </Button>
+            </div>
           </div>
-          <Input icon={Search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索域名" />
+          <Input icon={Search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索名称、域名、分组" />
         </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-4">
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-4" data-cert-list>
           {loaded && certs.length === 0 && <div className="px-3 py-8 text-center text-[12.5px] text-muted">还没有证书</div>}
-          {list.map((c) => {
-            const tone = certTone(c.days);
-            const synced = c.targets.filter((t) => t.synced).length;
-            const total = Math.max(1, (c.notAfter - c.notBefore) / 86400000);
-            return (
-              <button key={c.id} type="button" onClick={() => setSel(c.id)} className={cn("w-full rounded-xl px-3 py-2.5 text-left transition-colors", sel === c.id ? "bg-accent/12" : "hover:bg-panel2")}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[13px] font-medium text-fg">{c.name}</span>
-                  <span className={cn("shrink-0 text-[11.5px]", `text-${tone}`)}>{c.days < 0 ? "已过期" : `${c.days} 天`}</span>
-                </div>
-                <div className="mt-0.5 truncate text-[11.5px] text-muted">
-                  {/* 改过名称的证书，这一行显示它的域名，免得认不出是哪张 */}
-                  {c.domains.length > 1 ? `${c.domains[0]} 等 ${c.domains.length} 个域名` : c.domains[0] && c.name !== c.domains[0] ? c.domains[0] : c.issuer}
-                </div>
-                <Meter className="mt-2" height={4} value={(Math.max(c.days, 0) / total) * 100} tone={tone} />
-                <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted">
-                  <ServerIcon size={11} />
-                  {c.targets.length === 0 ? "未配置部署目标" : synced === c.targets.length ? <span className="text-ok">{c.targets.length} 个目标已同步</span> : <span className="text-warn">{c.targets.length - synced}/{c.targets.length} 个目标待同步</span>}
-                </div>
-              </button>
-            );
-          })}
+          <CertList
+            certs={certs}
+            groups={groups}
+            sel={sel}
+            q={q}
+            reveal={reveal}
+            onSelect={setSel}
+            onCerts={setCerts}
+            onGroups={setGroups}
+            onEditGroup={setGroupEdit}
+            reload={load}
+          />
         </div>
       </div>
       <div className="@container min-w-0 shrink-0 @3xl:min-h-0 @3xl:flex-1 @3xl:shrink @3xl:overflow-y-auto">
         {cur ? (
-          <CertDetail cert={cur} reload={load} onReplace={() => setImportMode({ replace: cur })} />
+          <CertDetail
+            cert={cur}
+            groups={groups}
+            reload={load}
+            onReplace={() => setImportMode({ replace: cur })}
+            onGrouped={() => setReveal(cur.id)}
+          />
         ) : (
           loaded && (
             <div className="mx-auto max-w-[640px] pt-16">
@@ -125,13 +135,30 @@ export default function Certs() {
           )
         )}
       </div>
+      <CertGroupModal
+        open={groupEdit !== null}
+        group={groupEdit ?? ""}
+        certs={certs}
+        groups={groups}
+        // 新建分组时先勾上正在看的那张证书；它已经在别的分组里就不勾，免得不小心把它挪走
+        preselect={cur && !cur.group ? cur.id : null}
+        onClose={() => setGroupEdit(null)}
+        onSaved={async (name) => {
+          const list = await load();
+          // 新建或修改之后把这个分组展开，看得到里面的证书
+          const first = name ? list.find((c) => c.group === name) : undefined;
+          if (first) setReveal(first.id);
+        }}
+      />
       <ImportCertModal
         open={!!importMode}
         replace={importMode?.replace}
+        groups={groups}
         onClose={() => setImportMode(null)}
         onSaved={async (c, replaced) => {
           await load();
           setSel(c.id);
+          setReveal(c.id);
           if (replaced && c.targets.length > 0) {
             const go = await confirm({ title: "证书已更新，立即同步？", message: `将新证书部署到 ${c.targets.length} 个部署目标（自动备份并在失败时回滚）。`, confirmText: "立即同步" });
             if (go) window.dispatchEvent(new CustomEvent("cert-deploy", { detail: { certId: c.id } }));
@@ -142,13 +169,14 @@ export default function Certs() {
   );
 }
 
-function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () => Promise<CertView[]>; onReplace: () => void }) {
+function CertDetail({ cert, groups, reload, onReplace, onGrouped }: { cert: CertView; groups: string[]; reload: () => Promise<CertView[]>; onReplace: () => void; onGrouped: () => void }) {
   const [target, setTarget] = useState<TargetView | null | undefined>(undefined);
   const [deploy, setDeploy] = useState<{ targetIds: string[] } | null>(null);
   const [discover, setDiscover] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [editing, setEditing] = useState<{ name: string; notes: string } | null>(null);
+  const [editing, setEditing] = useState<{ name: string; notes: string; group: string } | null>(null);
+  const edit = () => setEditing({ name: cert.name, notes: cert.notes, group: cert.group });
   const [savingMeta, setSavingMeta] = useState(false);
   const mask = useMask();
   const saveMeta = async () => {
@@ -156,8 +184,11 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
     setSavingMeta(true);
     try {
       await api.UpdateCertMeta(cert.id, editing.name, editing.notes);
+      const moved = editing.group.trim() !== cert.group;
+      if (moved) await api.SetCertGroup([cert.id], editing.group);
       setEditing(null);
       await reload();
+      if (moved) onGrouped();
     } catch (e) {
       toast.error("保存失败", e);
     } finally {
@@ -234,10 +265,10 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
         </div>
         <div className="min-w-0 flex-1">
           <div className="group/name flex items-center gap-2">
-            <h2 className="truncate text-[19px] font-semibold" title="双击修改名称" onDoubleClick={() => setEditing({ name: cert.name, notes: cert.notes })}>
+            <h2 className="truncate text-[19px] font-semibold" title="双击修改名称" onDoubleClick={edit}>
               {cert.name}
             </h2>
-            <IconButton icon={Pencil} size="sm" tip="修改名称" className="opacity-60 group-hover/name:opacity-100" onClick={() => setEditing({ name: cert.name, notes: cert.notes })} data-cert-rename />
+            <IconButton icon={Pencil} size="sm" tip="修改名称、分组" className="opacity-60 group-hover/name:opacity-100" onClick={edit} data-cert-rename />
             <DaysBadge days={cert.days} />
           </div>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -263,7 +294,7 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
           <Menu
             trigger={<IconButton icon={Ellipsis} />}
             items={[
-              { label: "修改名称和备注", icon: Pencil, onClick: () => setEditing({ name: cert.name, notes: cert.notes }) },
+              { label: "修改名称、分组和备注", icon: Pencil, onClick: edit },
               {
                 label: "导出证书文件",
                 icon: Download,
@@ -481,8 +512,8 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
       <Modal
         open={editing !== null}
         onClose={() => setEditing(null)}
-        title="修改名称和备注"
-        description="名称只是这张证书在证书中心里显示的标题，不影响证书本身和部署。"
+        title="修改名称、分组和备注"
+        description="名称和分组只影响证书在证书中心里怎样显示，不影响证书本身和部署。"
         icon={Pencil}
         size="sm"
         footer={
@@ -509,6 +540,14 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
               maxLength={80}
               data-cert-name
             />
+          </Field>
+          <Field label="分组" hint="可以选已有的分组，也可以直接输入一个新的；留空表示不分组">
+            <Input value={editing?.group ?? ""} onChange={(e) => setEditing((m) => m && { ...m, group: e.target.value })} placeholder="不分组" list="cert-groups" maxLength={30} data-cert-group-input />
+            <datalist id="cert-groups">
+              {groups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
           </Field>
           <Field label="备注">
             <Textarea value={editing?.notes ?? ""} onChange={(e) => setEditing((m) => m && { ...m, notes: e.target.value })} placeholder="例如：续期方式、负责人、用途" />
@@ -559,9 +598,10 @@ function ParsedPreview({ p }: { p: CertParsed }) {
   );
 }
 
-function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; replace?: CertView; onClose: () => void; onSaved: (c: CertView, replaced: boolean) => void }) {
+function ImportCertModal({ open, replace, groups, onClose, onSaved }: { open: boolean; replace?: CertView; groups: string[]; onClose: () => void; onSaved: (c: CertView, replaced: boolean) => void }) {
   const [mode, setMode] = useState<"paste" | "pull">("paste");
   const [name, setName] = useState("");
+  const [group, setGroup] = useState("");
   const [certPem, setCertPem] = useState("");
   const [keyPem, setKeyPem] = useState("");
   const [preview, setPreview] = useState<CertParsed | null>(null);
@@ -575,6 +615,7 @@ function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; r
     if (!open) return;
     setMode(replace?.source ? "pull" : "paste");
     setName("");
+    setGroup("");
     setCertPem("");
     setKeyPem("");
     setPreview(null);
@@ -616,8 +657,8 @@ function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; r
     try {
       const c =
         mode === "paste"
-          ? await api.ImportCert({ id: replace?.id ?? "", name, certPem, keyPem, chainPem: "", notes: "" })
-          : await api.PullCert({ certId: replace?.id ?? "", serverId: server[0], certPath: paths.cert, keyPath: paths.key, chainPath: paths.chain, name });
+          ? await api.ImportCert({ id: replace?.id ?? "", name, certPem, keyPem, chainPem: "", notes: "", group })
+          : await api.PullCert({ certId: replace?.id ?? "", serverId: server[0], certPath: paths.cert, keyPath: paths.key, chainPath: paths.chain, name, group });
       toast.ok(replace ? "证书已更新" : "证书已导入", `${c.domains.join(", ")} · 有效期至 ${formatDate(c.notAfter)}`);
       onClose();
       onSaved(c, !!replace);
@@ -656,9 +697,19 @@ function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; r
           ]}
         />
         {!replace && (
-          <Field label="名称" hint="留空时使用证书主域名">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 example.com 通配符证书" />
-          </Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.6fr_1fr]">
+            <Field label="名称" hint="留空时使用证书主域名">
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 example.com 通配符证书" />
+            </Field>
+            <Field label="分组" hint="可以不填">
+              <Input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="不分组" list="cert-groups-import" maxLength={30} />
+              <datalist id="cert-groups-import">
+                {groups.map((g) => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
+            </Field>
+          </div>
         )}
         {mode === "paste" ? (
           <>

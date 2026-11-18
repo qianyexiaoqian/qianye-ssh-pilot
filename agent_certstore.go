@@ -159,7 +159,7 @@ func (a *App) certTools() []*agent.Tool {
 				"- 从服务器导入：填 server、cert_path、key_path（路径先用 find_certificates 查，查不到再用 run_command 找）。会记下来源，以后证书在那台服务器上续期了，只填 certificate 再调用一次就能把新版本拉过来。\n" +
 				"- 从用户发来的附件导入：填 cert_attachment 和 key_attachment（证书和私钥在同一个文件里时只填 cert_attachment）。\n" +
 				"- certificate 填证书库里已有证书的名称、ID 或域名，表示用新版本替换它（续期），它的部署目标保持不变；这种替换需要用户批准。\n" +
-				"- 只想改证书在证书库里显示的名称：填 certificate 和 name。\n" +
+				"- 只想改证书在证书库里显示的名称或分组：填 certificate，加上 name 和（或）group；group 填空字符串表示移出分组。\n" +
 				"导入以后要部署到别的服务器，用 save_deploy_target（deploy=true）。",
 			Schema: agent.Obj(map[string]any{
 				"server":           agent.Str("证书所在的服务器名称或 ID"),
@@ -171,20 +171,22 @@ func (a *App) certTools() []*agent.Tool {
 				"chain_attachment": agent.Str("中间证书附件的 ID 或文件名（可选）"),
 				"certificate":      agent.Str("要更新的已有证书：名称、ID 或其中一个域名（可选）"),
 				"name":             agent.Str("证书在证书库里显示的名称；不填时用第一个域名"),
+				"group":            agent.Str("证书在证书库里的分组，例如 生产 / 测试；分组不存在时自动新建"),
 				"separate":         map[string]any{"type": "boolean", "description": "证书库里已经有域名相同的证书时，仍然作为另一张独立的证书保存"},
 			}),
 			Handler: func(ctx context.Context, tc *agent.ToolContext, raw json.RawMessage) (*agent.ToolResult, error) {
 				var in struct {
-					Server          string `json:"server"`
-					CertPath        string `json:"cert_path"`
-					KeyPath         string `json:"key_path"`
-					ChainPath       string `json:"chain_path"`
-					CertAttachment  string `json:"cert_attachment"`
-					KeyAttachment   string `json:"key_attachment"`
-					ChainAttachment string `json:"chain_attachment"`
-					Certificate     string `json:"certificate"`
-					Name            string `json:"name"`
-					Separate        bool   `json:"separate"`
+					Server          string  `json:"server"`
+					CertPath        string  `json:"cert_path"`
+					KeyPath         string  `json:"key_path"`
+					ChainPath       string  `json:"chain_path"`
+					CertAttachment  string  `json:"cert_attachment"`
+					KeyAttachment   string  `json:"key_attachment"`
+					ChainAttachment string  `json:"chain_attachment"`
+					Certificate     string  `json:"certificate"`
+					Name            string  `json:"name"`
+					Group           *string `json:"group"`
+					Separate        bool    `json:"separate"`
 				}
 				if err := parseArgs(raw, &in); err != nil {
 					return nil, err
@@ -206,7 +208,7 @@ func (a *App) certTools() []*agent.Tool {
 					if existing == nil {
 						return nil, errors.New("请说明证书从哪里来：服务器上的文件（server + cert_path + key_path），或者用户发来的附件（cert_attachment + key_attachment）")
 					}
-					return a.refreshForAgent(tc, existing, in.Name)
+					return a.refreshForAgent(tc, existing, in.Name, in.Group)
 				}
 
 				var p *certs.Parsed
@@ -276,6 +278,12 @@ func (a *App) certTools() []*agent.Tool {
 				if err != nil {
 					return nil, err
 				}
+				if in.Group != nil && strings.TrimSpace(*in.Group) != view.Group {
+					if err := a.SetCertGroup([]string{view.ID}, *in.Group); err != nil {
+						return nil, err
+					}
+					view.Group = strings.TrimSpace(*in.Group)
+				}
 				a.emit("certs:changed")
 
 				var b strings.Builder
@@ -288,6 +296,9 @@ func (a *App) certTools() []*agent.Tool {
 					fmt.Fprintf(&b, "已把证书库里的「%s」（ID %s）更新为新版本。\n", view.Name, view.ID)
 				}
 				b.WriteString(describeParsed(p) + "\n")
+				if view.Group != "" {
+					fmt.Fprintf(&b, "分组：%s\n", view.Group)
+				}
 				if view.SourceServerName != "" && view.Source != nil {
 					fmt.Fprintf(&b, "来源：%s:%s（以后在那台服务器上续期了，只填 certificate 再调用一次 import_certificate 就能更新）\n", view.SourceServerName, view.Source.CertPath)
 				}
@@ -372,14 +383,34 @@ func (a *App) certTools() []*agent.Tool {
 	}
 }
 
-// refreshForAgent 处理 import_certificate 只给了 certificate 的情况：带着新名称就是改名，否则从记录的来源服务器把新版本拉过来。
-func (a *App) refreshForAgent(tc *agent.ToolContext, cert *CertView, name string) (*agent.ToolResult, error) {
+// refreshForAgent 处理 import_certificate 只给了 certificate 的情况：带着新名称或分组就是改名、换分组，
+// 否则从记录的来源服务器把新版本拉过来。
+func (a *App) refreshForAgent(tc *agent.ToolContext, cert *CertView, name string, group *string) (*agent.ToolResult, error) {
+	var done []string
+	final := cert.Name
 	if name != "" && name != cert.Name {
 		if err := a.UpdateCertMeta(cert.ID, name, cert.Notes); err != nil {
 			return nil, err
 		}
+		final = name
+		done = append(done, fmt.Sprintf("改名为「%s」", name))
+	}
+	if group != nil && strings.TrimSpace(*group) != cert.Group {
+		if err := a.SetCertGroup([]string{cert.ID}, *group); err != nil {
+			return nil, err
+		}
+		if g := strings.TrimSpace(*group); g != "" {
+			done = append(done, fmt.Sprintf("放进分组「%s」", g))
+		} else {
+			done = append(done, "移出分组")
+		}
+	}
+	if len(done) > 0 {
 		a.emit("certs:changed")
-		return &agent.ToolResult{Content: fmt.Sprintf("已把证书「%s」改名为「%s」。", cert.Name, name), Meta: map[string]any{"kind": "cert_import", "id": cert.ID, "name": name, "updated": true}}, nil
+		return &agent.ToolResult{Content: fmt.Sprintf("已把证书「%s」%s。", cert.Name, strings.Join(done, "，并")), Meta: map[string]any{"kind": "cert_import", "id": cert.ID, "name": final, "updated": true}}, nil
+	}
+	if group != nil {
+		return &agent.ToolResult{Content: fmt.Sprintf("证书「%s」的名称和分组已经是这样了，没有需要修改的地方。", cert.Name)}, nil
 	}
 	var b strings.Builder
 	if cert.Source == nil {

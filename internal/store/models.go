@@ -1,5 +1,10 @@
 package store
 
+import (
+	"cmp"
+	"slices"
+)
+
 // ProxyConfig 是连接服务器时经过的代理。Type 为 local 表示本机上的代理软件（Clash、v2rayN 等，
 // 地址固定是 127.0.0.1，协议在连接时自动识别），http / socks5 是指定地址的代理。
 type ProxyConfig struct {
@@ -121,8 +126,10 @@ type CertVersion struct {
 
 // Certificate 是一张 TLS 证书（fullchain + 私钥）。
 type Certificate struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Group 是证书所在的分组；为空表示没有分组。分组之间的先后顺序记在 Data.CertGroups 里。
+	Group       string        `json:"group"`
 	Domains     []string      `json:"domains"`
 	Subject     string        `json:"subject"`
 	Issuer      string        `json:"issuer"`
@@ -470,20 +477,59 @@ func (s *Settings) fillDefaults() {
 
 // Data 是持久化到 store.json 的全部结构化数据。
 type Data struct {
-	Version    int             `json:"version"`
-	Servers    []*Server       `json:"servers"`
-	Keys       []*PrivateKey   `json:"keys"`
-	PublicKeys []*PublicKey    `json:"publicKeys"`
-	Bindings   []*KeyBinding   `json:"bindings"`
-	Certs      []*Certificate  `json:"certs"`
-	Targets    []*DeployTarget `json:"targets"`
-	Scripts    []*Script       `json:"scripts"`
-	Settings   Settings        `json:"settings"`
+	Version    int            `json:"version"`
+	Servers    []*Server      `json:"servers"`
+	Keys       []*PrivateKey  `json:"keys"`
+	PublicKeys []*PublicKey   `json:"publicKeys"`
+	Bindings   []*KeyBinding  `json:"bindings"`
+	Certs      []*Certificate `json:"certs"`
+	// CertGroups 是证书分组的先后顺序；证书在各自分组里的先后顺序就是它们在 Certs 里的先后顺序。
+	CertGroups []string `json:"certGroups,omitempty"`
+	// CertOrderV1 记录证书列表是否已经从“按到期时间排”改成“按保存的顺序排”（可以拖动调整）。
+	CertOrderV1 bool            `json:"certOrderV1"`
+	Targets     []*DeployTarget `json:"targets"`
+	Scripts     []*Script       `json:"scripts"`
+	Settings    Settings        `json:"settings"`
 	// QuickSeeded 记录是否已写入过默认快捷命令，用户删除后不会再次出现。
 	QuickCommands []*QuickCommand `json:"quickCommands"`
 	QuickSeeded   bool            `json:"quickSeeded"`
 	// AIDefaultV2 记录是否已经把“从未配置过的 AI 设置”切换到新的默认服务（DeepSeek）。
 	AIDefaultV2 bool `json:"aiDefaultV2"`
+}
+
+// migrateCertOrder 把证书按到期时间排一次。以前证书列表总是按到期时间显示，现在按保存的顺序显示、可以拖动调整：
+// 升级后第一次打开时保持用户原来看到的顺序。只执行一次。
+func migrateCertOrder(d *Data) {
+	if d.CertOrderV1 {
+		return
+	}
+	d.CertOrderV1 = true
+	slices.SortStableFunc(d.Certs, func(x, y *Certificate) int { return cmp.Compare(x.NotAfter/1000, y.NotAfter/1000) })
+}
+
+// TidyCertGroups 整理分组的顺序表：去掉已经没有证书的分组，补上表里还没有的分组（排在后面）。
+func (d *Data) TidyCertGroups() {
+	used := map[string]bool{}
+	for _, c := range d.Certs {
+		if c.Group != "" {
+			used[c.Group] = true
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, g := range d.CertGroups {
+		if used[g] && !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	for _, c := range d.Certs {
+		if c.Group != "" && !seen[c.Group] {
+			seen[c.Group] = true
+			out = append(out, c.Group)
+		}
+	}
+	d.CertGroups = out
 }
 
 // migrateAIDefault 把还停留在旧默认值（Claude、没有填过 API Key）的 AI 设置换成新的默认服务。

@@ -590,3 +590,98 @@ func TestBackgroundReviewCreatesSkill(t *testing.T) {
 		t.Fatal("session search should find the conversation")
 	}
 }
+
+// 「停止」必须总能让这一轮结束：工具卡在外部调用上、对取消没有反应时，不再等它。
+func TestStopEndsTurnEvenWhenToolIsStuck(t *testing.T) {
+	oldGrace := toolGrace
+	toolGrace = 300 * time.Millisecond
+	defer func() { toolGrace = oldGrace }()
+
+	release := make(chan struct{})
+	defer close(release)
+	entered := make(chan struct{}, 1)
+	quick := &Tool{Name: "quick", Description: "立刻返回", Schema: obj(map[string]any{}),
+		Handler: func(context.Context, *ToolContext, json.RawMessage) (*ToolResult, error) {
+			return &ToolResult{Content: "很快就好了"}, nil
+		}}
+	stuck := &Tool{Name: "stuck", Description: "卡住不返回，也不理会取消", Schema: obj(map[string]any{}),
+		Handler: func(context.Context, *ToolContext, json.RawMessage) (*ToolResult, error) {
+			entered <- struct{}{}
+			<-release
+			return &ToolResult{Content: "迟到的结果"}, nil
+		}}
+	fp := &fakeProvider{steps: []func(ChatRequest) *ChatResponse{
+		func(ChatRequest) *ChatResponse {
+			return &ChatResponse{Message: Message{Role: "assistant", Provider: "fake", Content: "先查两样东西。", ToolCalls: []ToolCall{
+				{ID: "call_quick", Name: "quick", Arguments: `{}`}, {ID: "call_stuck", Name: "stuck", Arguments: `{}`},
+			}}, StopReason: "tool_use"}
+		},
+		reply("不应该走到这里"),
+	}}
+	a, events := newTestAgent(t, fp, store.AISettings{MaxSteps: 10}, quick, stuck)
+	sess, err := a.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Send(sess.ID, "看一下这两台"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stuck tool never started")
+	}
+	// 还在执行的是哪一步：界面切走再回来时靠它恢复“正在执行”的状态
+	if id, since := a.ActiveTool(sess.ID); id != "call_stuck" || since == 0 {
+		t.Errorf("active tool: %q %d", id, since)
+	}
+	// 已经完成的那一步已经存盘：重新打开会话能看到它的结果，而不是“未完成”
+	saved, err := a.Sessions.Load(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedTools []string
+	for _, m := range saved.Messages {
+		if m.Role == "tool" {
+			savedTools = append(savedTools, m.ToolCallID+"="+m.Content)
+		}
+	}
+	if len(savedTools) != 1 || savedTools[0] != "call_quick=很快就好了" {
+		t.Errorf("tool results saved while the next tool is running: %v", savedTools)
+	}
+
+	start := time.Now()
+	a.Stop(sess.ID)
+	waitFor(t, events, "done", nil)
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("stop took %s", took)
+	}
+	if a.IsRunning(sess.ID) {
+		t.Error("the session should not be running after stop")
+	}
+	if id, _ := a.ActiveTool(sess.ID); id != "" {
+		t.Errorf("active tool after stop: %q", id)
+	}
+	saved, _ = a.Sessions.Load(sess.ID)
+	var last, stuckResult string
+	for _, m := range saved.Messages {
+		if m.Role == "tool" && m.ToolCallID == "call_stuck" {
+			stuckResult = m.Content
+		}
+		last = m.Content
+	}
+	if !strings.Contains(stuckResult, "已停止") || strings.Contains(stuckResult, "迟到的结果") {
+		t.Errorf("result recorded for the stuck tool: %q", stuckResult)
+	}
+	if last != "已停止" {
+		t.Errorf("last message: %q", last)
+	}
+	if n := len(fp.reqs); n != 1 {
+		t.Errorf("the model must not be called again after stop, got %d calls", n)
+	}
+	// 停下来之后可以马上接着发消息
+	if err := a.Send(sess.ID, "继续"); err != nil {
+		t.Fatalf("send after stop: %v", err)
+	}
+	waitFor(t, events, "done", nil)
+}

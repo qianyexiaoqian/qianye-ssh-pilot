@@ -1,6 +1,7 @@
 package sshx
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -17,11 +18,11 @@ const osProbeScript = `n=; ` +
 
 // output 在连接上执行一条命令并返回标准输出；超时或出错时返回已经拿到的内容。
 func (c *Client) output(cmd string, timeout time.Duration) (string, error) {
-	s, err := c.NewSession()
+	s, err := c.OpenSession(context.Background())
 	if err != nil {
 		return "", err
 	}
-	defer s.Close()
+	defer func() { go s.Close() }()
 	type result struct {
 		out []byte
 		err error

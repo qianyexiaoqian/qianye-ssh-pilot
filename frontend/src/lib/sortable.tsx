@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as Reac
 import { createPortal } from "react-dom";
 import { cn } from "./format";
 
-// 拖动排序：按住一项不放（长按）把它提起来，拖到新的位置松手。服务器卡片（网格）和终端标签（横排）共用。
+// 拖动排序：按住一项不放（长按）把它提起来，拖到新的位置松手。
+// 服务器卡片（网格）、终端标签（横排）、证书中心的分组和证书（竖排）共用。
 //
 // 做法：被拖的那一项留在原地当占位（由调用方画成虚框），另外画一份跟着指针走的「浮起来的副本」；
 // 指针每移动一下，就看副本的中心落在了谁的位置上，把占位挪过去，其余各项用一小段动画滑到新位置。
@@ -35,11 +36,21 @@ export interface SortableOptions {
   /** 松手时顺序有变化才会调用。调用方应当立刻（同步）按新的顺序显示，再去保存 */
   onReorder: (ids: string[]) => void;
   disabled?: boolean;
-  /** grid：卡片网格，上下左右都能拖；x：横排的标签，只能左右拖 */
-  axis?: "grid" | "x";
+  /** grid：卡片网格，上下左右都能拖；x：横排的标签，只能左右拖；y：竖排的列表，只能上下拖 */
+  axis?: Axis;
   /** 按住多久算长按（毫秒） */
   delay?: number;
+  /**
+   * 可以把一项拖到列表之外的某个目标上松手（例如把证书拖到另一个分组的标题上）：
+   * dropAttr 是这些目标身上的属性名，属性的值是目标的标识。拖到目标上时不调整顺序，松手后调用 onDropTo。
+   */
+  dropAttr?: string;
+  onDropTo?: (id: string, target: string) => void;
+  /** 拖动过程中指针移到了哪个目标上（离开时为 null），用来给目标加上高亮 */
+  onHover?: (target: string | null) => void;
 }
+
+type Axis = "grid" | "x" | "y";
 
 export interface Sortable {
   /** 应当按这个顺序渲染：拖动过程中是临时的顺序 */
@@ -54,7 +65,7 @@ export interface Sortable {
   overlayPos: () => { x: number; y: number };
 }
 
-function scrollParent(el: HTMLElement, axis: "grid" | "x"): HTMLElement | null {
+function scrollParent(el: HTMLElement, axis: Axis): HTMLElement | null {
   for (let p: HTMLElement | null = el.parentElement; p && p !== document.body; p = p.parentElement) {
     const style = getComputedStyle(p);
     const overflow = axis === "x" ? style.overflowX : style.overflowY;
@@ -64,7 +75,7 @@ function scrollParent(el: HTMLElement, axis: "grid" | "x"): HTMLElement | null {
   return null;
 }
 
-export function useSortable({ ids, onReorder, disabled = false, axis = "grid", delay = 220 }: SortableOptions): Sortable {
+export function useSortable({ ids, onReorder, disabled = false, axis = "grid", delay = 220, dropAttr, onDropTo, onHover }: SortableOptions): Sortable {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [working, setWorking] = useState<string[] | null>(null);
   const els = useRef(new Map<string, HTMLElement>());
@@ -74,6 +85,11 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
     ids,
     onReorder,
     axis,
+    dropAttr,
+    onDropTo,
+    onHover,
+    /** 指针正停在哪个目标上（见 dropAttr） */
+    hover: null as string | null,
     press: null as { id: string; x: number; y: number; mouse: boolean; timer: number } | null,
     drag: null as DragState | null,
     working: null as string[] | null,
@@ -88,12 +104,31 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
   live.current.ids = ids;
   live.current.onReorder = onReorder;
   live.current.axis = axis;
+  live.current.dropAttr = dropAttr;
+  live.current.onDropTo = onDropTo;
+  live.current.onHover = onHover;
 
   const overlayPos = () => {
     const L = live.current;
     const d = L.drag;
     if (!d) return { x: 0, y: 0 };
-    return { x: L.x - d.offX, y: L.axis === "x" ? d.top : L.y - d.offY };
+    return { x: L.axis === "y" ? d.left : L.x - d.offX, y: L.axis === "x" ? d.top : L.y - d.offY };
+  };
+
+  /** 指针是不是停在列表之外的某个目标上 */
+  const setHover = (target: string | null) => {
+    const L = live.current;
+    if (L.hover === target) return;
+    L.hover = target;
+    // 停在目标上时让副本变淡：它比目标（一行标题）大得多，不然会把目标的高亮整个挡住
+    if (overlayRef.current) overlayRef.current.style.opacity = target === null ? "" : "0.5";
+    L.onHover?.(target);
+  };
+  const findTarget = () => {
+    const L = live.current;
+    if (!L.dropAttr) return null;
+    const el = document.elementFromPoint(L.x, L.y)?.closest(`[${L.dropAttr}]`);
+    return el ? el.getAttribute(L.dropAttr) : null;
   };
 
   const snapshot = () => {
@@ -112,11 +147,20 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
     const at = overlayPos();
     const cx = at.x + d.w / 2 - pr.left - parent.clientLeft + parent.scrollLeft;
     const cy = at.y + d.h / 2 - pr.top - parent.clientTop + parent.scrollTop;
+    // 竖排的列表按指针的位置算：各项高矮不一（展开的分组很高），副本的中心离指针可能很远
+    const py = L.y - pr.top - parent.clientTop + parent.scrollTop;
     const from = order.indexOf(d.id);
     let to = from;
     for (let i = 0; i < order.length && to === from; i++) {
       const el = i === from ? undefined : els.current.get(order[i]);
-      if (!el || cx < el.offsetLeft || cx >= el.offsetLeft + el.offsetWidth) continue;
+      if (!el) continue;
+      if (L.axis === "y") {
+        if (py < el.offsetTop || py >= el.offsetTop + el.offsetHeight) continue;
+        const mid = el.offsetTop + el.offsetHeight / 2;
+        if (i > from ? py > mid : py < mid) to = i;
+        continue;
+      }
+      if (cx < el.offsetLeft || cx >= el.offsetLeft + el.offsetWidth) continue;
       if (L.axis === "x") {
         // 标签宽窄不一：要越过对方的中线才换位置，否则换完马上又会被判回去
         const mid = el.offsetLeft + el.offsetWidth / 2;
@@ -190,9 +234,11 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
     const L = live.current;
     const d = L.drag;
     const order = L.working;
+    const target = L.hover;
     release();
     L.drag = null;
     L.working = null;
+    setHover(null);
     if (!d) return;
     // 拖完松手不算一次点击：否则会触发按下的那个位置上的操作（例如复制名称）
     const swallow = (ev: MouseEvent) => {
@@ -209,6 +255,13 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
       // 取消：各项滑回原来的位置
       snapshot();
       clear();
+      return;
+    }
+    if (target !== null) {
+      // 拖到了列表之外的目标上：顺序不变，交给调用方处理
+      snapshot();
+      clear();
+      L.onDropTo?.(d.id, target);
       return;
     }
     if (order.join("\n") !== L.ids.join("\n")) L.onReorder(order);
@@ -240,7 +293,9 @@ export function useSortable({ ids, onReorder, disabled = false, axis = "grid", d
       if (L.drag) {
         ev.preventDefault();
         place();
-        retarget();
+        const over = findTarget();
+        setHover(over);
+        if (over === null) retarget();
       } else if (L.press && Math.hypot(ev.clientX - L.press.x, ev.clientY - L.press.y) > MOVE_START) {
         // 鼠标：按住一拖就开始。触摸屏：按住不动才是拖动，直接滑是在滚动页面
         if (L.press.mouse) begin();

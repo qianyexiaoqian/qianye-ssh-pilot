@@ -152,7 +152,19 @@ function toolSummary(call: ToolCall, names: Record<string, string> = {}): string
   return "";
 }
 
-function ToolCard({ call, result, running, names }: { call: ToolCall; result?: AgentMessage; running: boolean; names?: Record<string, string> }) {
+/** 一步执行了多久：超过几秒才显示，让人分得清是“慢”还是“卡住了” */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const sec = Math.max(0, Math.floor((now - since) / 1000));
+  if (sec < 5) return null;
+  return <span className="shrink-0 text-[11.5px] text-muted tabular-nums">{sec < 60 ? `${sec} 秒` : `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`}</span>;
+}
+
+function ToolCard({ call, result, running, since, names }: { call: ToolCall; result?: AgentMessage; running: boolean; since?: number; names?: Record<string, string> }) {
   const [open, setOpen] = useState(false);
   const meta = toolMeta[call.name] ?? { icon: Wrench, label: call.name };
   const args = parseArgs(call.arguments);
@@ -169,6 +181,7 @@ function ToolCard({ call, result, running, names }: { call: ToolCall; result?: A
         <meta.icon size={14} className={cn("shrink-0", learning ? "text-accent" : "text-muted")} />
         <span className="shrink-0 text-[12.5px] font-medium text-fg2">{meta.label}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{toolSummary(call, names)}</span>
+        {status === "running" && since && <Elapsed since={since} />}
         {status === "running" && <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" />}
         {status === "pending" && <span className="shrink-0 text-[11.5px] text-muted">未完成</span>}
         {status === "ok" && <CircleCheck size={14} className="shrink-0 text-ok" />}
@@ -426,7 +439,7 @@ export function ChatThread({ store, compact, onRun, runLabel }: { store: AgentSt
               {m.thinking && <Thinking text={m.thinking} />}
               {m.content && <Markdown text={m.content} onRun={onRun} runLabel={runLabel} />}
               {(m.toolCalls ?? []).map((c) => (
-                <ToolCard key={c.id} call={c} result={results[c.id]} running={running && ag.live.activeTool === c.id} names={attachNames} />
+                <ToolCard key={c.id} call={c} result={results[c.id]} running={running && ag.live.activeTool === c.id} since={ag.live.activeSince} names={attachNames} />
               ))}
             </div>
           </div>
@@ -481,6 +494,7 @@ export function Composer({
   onSend,
   onStop,
   running,
+  stopping,
   placeholder,
   hint,
   compact,
@@ -494,6 +508,8 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   running: boolean;
+  /** 已经点了停止，正在等这一轮收尾 */
+  stopping?: boolean;
   placeholder: string;
   hint?: ReactNode;
   compact?: boolean;
@@ -581,8 +597,8 @@ export function Composer({
           <span className="min-w-0 truncate text-[11.5px] text-muted">{hint}</span>
         </div>
         {running ? (
-          <Button size="sm" variant="danger" icon={Square} onClick={onStop}>
-            停止
+          <Button size="sm" variant="danger" icon={Square} loading={stopping} onClick={onStop} data-stop-button>
+            {stopping ? "正在停止…" : "停止"}
           </Button>
         ) : (
           <button type="button" disabled={!canSend} onClick={onSend} title="发送（Enter）" className={cn("flex shrink-0 items-center justify-center rounded-xl grad-accent text-white transition-opacity disabled:opacity-35", compact ? "h-7 w-7" : "h-8 w-8")}>

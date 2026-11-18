@@ -227,6 +227,7 @@ export default function Assistant() {
               onSend={() => void send()}
               onStop={() => ag.stop()}
               running={running}
+              stopping={!!ag.currentId && !!ag.stopping[ag.currentId]}
               placeholder={running ? "AI 正在处理…" : "描述你想做的事，例如：检查 web-01 为什么 502"}
               hint="Enter 发送 · Shift+Enter 换行 · 可以粘贴截图、拖入文件"
               attachments={atts}

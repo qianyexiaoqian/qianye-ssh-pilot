@@ -32,8 +32,11 @@ func (p *Pool) SFTP(ctx context.Context, serverID string) (*sftp.Client, error) 
 	if e != nil && e.owner == c {
 		return e.client, nil
 	}
-	cl, err := sftp.NewClient(c.Client, sftp.UseConcurrentWrites(true))
+	cl, err := await(ctx, c, func() (*sftp.Client, error) { return sftp.NewClient(c.Client, sftp.UseConcurrentWrites(true)) }, func(cl *sftp.Client) { cl.Close() })
 	if err != nil {
+		if errors.Is(err, ErrNoReply) || ctx.Err() != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("无法打开文件传输通道（服务器可能没有启用 SFTP）: %w", err)
 	}
 	p.mu.Lock()

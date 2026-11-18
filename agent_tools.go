@@ -446,6 +446,9 @@ func (a *App) serverTools() []*agent.Tool {
 				for _, c := range list {
 					fmt.Fprintf(&b, "## %s（ID %s）\n域名：%s｜签发：%s｜到期：%s（剩 %d 天）\n", c.Name, c.ID, strings.Join(c.Domains, ", "), c.Issuer,
 						time.UnixMilli(c.NotAfter).Format("2006-01-02"), c.Days)
+					if c.Group != "" {
+						fmt.Fprintf(&b, "分组：%s\n", c.Group)
+					}
 					if c.SourceServerName != "" && c.Source != nil {
 						fmt.Fprintf(&b, "来源：%s:%s\n", c.SourceServerName, c.Source.CertPath)
 					}

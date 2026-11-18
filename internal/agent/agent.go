@@ -53,6 +53,7 @@ type Agent struct {
 
 	mu        sync.Mutex
 	running   map[string]context.CancelFunc
+	active    map[string]activeTool
 	approvals map[string]*pendingApproval
 	reviewing map[string]bool
 	sessLocks map[string]*sync.Mutex
@@ -68,6 +69,7 @@ func New(cfg Config) *Agent {
 		Attach:    NewAttachStore(filepath.Join(cfg.DataDir, "attachments"), cfg.ReadOnly),
 		Learn:     NewLearnLog(filepath.Join(cfg.DataDir, "learning.jsonl")),
 		running:   map[string]context.CancelFunc{},
+		active:    map[string]activeTool{},
 		approvals: map[string]*pendingApproval{},
 		reviewing: map[string]bool{},
 		sessLocks: map[string]*sync.Mutex{},
@@ -203,6 +205,7 @@ func (a *Agent) Send(sessionID, text string, attachIDs ...string) error {
 			}
 			a.mu.Lock()
 			delete(a.running, sessionID)
+			delete(a.active, sessionID)
 			a.mu.Unlock()
 			cancel()
 			a.emit(Event{SessionID: sessionID, Type: "done"})
@@ -242,6 +245,35 @@ func (a *Agent) StopAll() {
 		a.Stop(id)
 	}
 }
+
+// activeTool 是会话里正在执行的那一次工具调用。
+type activeTool struct {
+	callID string
+	since  int64
+}
+
+func (a *Agent) setActive(sessionID, callID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if callID == "" {
+		delete(a.active, sessionID)
+		return
+	}
+	a.active[sessionID] = activeTool{callID: callID, since: nowMs()}
+}
+
+// ActiveTool 返回会话里正在执行的工具调用和它开始的时间；没有时 callID 为空。
+// 界面重新打开一个还在运行的会话时，据此知道哪一步还在执行。
+func (a *Agent) ActiveTool(sessionID string) (callID string, since int64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	t := a.active[sessionID]
+	return t.callID, t.since
+}
+
+// toolGrace 是对话被停止之后，等正在执行的工具自己收尾的时间。
+// 绝大多数工具会立刻响应取消；卡在外部调用上的不再等，这一轮直接结束，它留在后台自己结束。
+var toolGrace = 5 * time.Second
 
 func (a *Agent) tool(name string) *Tool {
 	for _, t := range a.tools {
@@ -381,6 +413,7 @@ func (a *Agent) runTurn(ctx context.Context, sessionID, text string, atts []Atta
 
 		for _, call := range msg.ToolCalls {
 			call := call
+			a.setActive(sessionID, call.ID)
 			a.emit(Event{SessionID: sessionID, Type: "tool_start", ToolCall: &call})
 			var res *ToolResult
 			switch {
@@ -394,6 +427,9 @@ func (a *Agent) runTurn(ctx context.Context, sessionID, text string, atts []Atta
 			tm := Message{ID: newID(), Role: "tool", ToolCallID: call.ID, ToolName: call.Name,
 				Content: store.TruncateMiddle(res.Content, 16000), IsError: res.IsError, Meta: res.Meta, CreatedAt: nowMs()}
 			sess.Messages = append(sess.Messages, tm)
+			a.setActive(sessionID, "")
+			// 每一步的结果马上存盘：界面切走再回来是从磁盘上重新读的
+			_ = a.Sessions.Save(sess)
 			a.emit(Event{SessionID: sessionID, Type: "tool_end", Message: &tm})
 		}
 		toolCalls += len(msg.ToolCalls)
@@ -421,7 +457,27 @@ func (a *Agent) runTurn(ctx context.Context, sessionID, text string, atts []Atta
 	}
 }
 
-func (a *Agent) execTool(ctx context.Context, sess *Session, call ToolCall, background bool) (res *ToolResult) {
+// execTool 执行一次工具调用。对话被停止（ctx 取消）后，工具迟迟不返回时不再等它：
+// 「停止」必须总是能让这一轮结束，不能被一个卡住的操作拖住。
+func (a *Agent) execTool(ctx context.Context, sess *Session, call ToolCall, background bool) *ToolResult {
+	done := make(chan *ToolResult, 1)
+	go func() { done <- a.runTool(ctx, sess, call, background) }()
+	select {
+	case r := <-done:
+		return r
+	case <-ctx.Done():
+	}
+	grace := time.NewTimer(toolGrace)
+	defer grace.Stop()
+	select {
+	case r := <-done:
+		return r
+	case <-grace.C:
+		return &ToolResult{Content: "已停止。这一步当时还没有返回结果，它可能没有执行完，也可能已经执行了一部分：继续之前请先查看实际状态。", IsError: true}
+	}
+}
+
+func (a *Agent) runTool(ctx context.Context, sess *Session, call ToolCall, background bool) (res *ToolResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			res = &ToolResult{Content: fmt.Sprintf("工具执行异常: %v", r), IsError: true}

@@ -647,6 +647,7 @@ export namespace main {
 	export class CertView {
 	    id: string;
 	    name: string;
+	    group: string;
 	    domains: string[];
 	    subject: string;
 	    issuer: string;
@@ -680,6 +681,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.group = source["group"];
 	        this.domains = source["domains"];
 	        this.subject = source["subject"];
 	        this.issuer = source["issuer"];
@@ -966,6 +968,7 @@ export namespace main {
 	    keyPem: string;
 	    chainPem: string;
 	    notes: string;
+	    group: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportCertRequest(source);
@@ -979,6 +982,7 @@ export namespace main {
 	        this.keyPem = source["keyPem"];
 	        this.chainPem = source["chainPem"];
 	        this.notes = source["notes"];
+	        this.group = source["group"];
 	    }
 	}
 	export class ImportKeyRequest {
@@ -1208,6 +1212,7 @@ export namespace main {
 	    keyPath: string;
 	    chainPath: string;
 	    name: string;
+	    group: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PullCertRequest(source);
@@ -1221,6 +1226,7 @@ export namespace main {
 	        this.keyPath = source["keyPath"];
 	        this.chainPath = source["chainPath"];
 	        this.name = source["name"];
+	        this.group = source["group"];
 	    }
 	}
 	export class RefreshResult {
@@ -1484,6 +1490,8 @@ export namespace main {
 	    approveAll: boolean;
 	    learned: number;
 	    serverId: string;
+	    activeTool: string;
+	    activeSince: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionView(source);
@@ -1503,6 +1511,8 @@ export namespace main {
 	        this.approveAll = source["approveAll"];
 	        this.learned = source["learned"];
 	        this.serverId = source["serverId"];
+	        this.activeTool = source["activeTool"];
+	        this.activeSince = source["activeSince"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

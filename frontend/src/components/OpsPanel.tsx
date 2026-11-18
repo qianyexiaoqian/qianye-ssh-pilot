@@ -256,6 +256,7 @@ export function OpsPanel({ tab, onClose, maxWidth }: { tab: TermTab | undefined;
               onSend={() => void send()}
               onStop={() => ops.stop()}
               running={running}
+              stopping={!!ops.currentId && !!ops.stopping[ops.currentId]}
               placeholder={running ? "AI 正在处理…" : `让 AI 操作 ${server?.name ?? "这台服务器"}，例如：nginx 为什么起不来`}
               attachments={atts}
               onAttachments={setAtts}

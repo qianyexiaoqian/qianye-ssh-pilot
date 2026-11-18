@@ -156,6 +156,8 @@ export function InspectionPrompt():Promise<string>;
 
 export function ListArchivedSkills():Promise<Array<agent.SkillMeta>>;
 
+export function ListCertGroups():Promise<Array<string>>;
+
 export function ListCerts():Promise<Array<main.CertView>>;
 
 export function ListGroups():Promise<Array<string>>;
@@ -220,6 +222,10 @@ export function RenameKey(arg1:string,arg2:string):Promise<void>;
 
 export function RenamePublicKey(arg1:string,arg2:string):Promise<void>;
 
+export function ReorderCertGroups(arg1:Array<string>):Promise<void>;
+
+export function ReorderCerts(arg1:Array<string>):Promise<void>;
+
 export function ReorderQuickCommands(arg1:Array<string>):Promise<void>;
 
 export function ReorderServers(arg1:Array<string>):Promise<void>;
@@ -235,6 +241,8 @@ export function RotateKey(arg1:string,arg2:Array<string>,arg3:boolean):Promise<A
 export function RunInspection(arg1:Array<string>):Promise<ops.Report>;
 
 export function RunScript(arg1:main.RunRequest):Promise<string>;
+
+export function SaveCertGroup(arg1:string,arg2:string,arg3:Array<string>):Promise<void>;
 
 export function SaveEmbedKey(arg1:string,arg2:boolean):Promise<void>;
 
@@ -269,6 +277,8 @@ export function ServiceStatus(arg1:string,arg2:string):Promise<string>;
 export function SetAutoLock(arg1:number):Promise<main.LockState>;
 
 export function SetCertAutoSync(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetCertGroup(arg1:Array<string>,arg2:string):Promise<void>;
 
 export function SetInspectInterval(arg1:number):Promise<store.Settings>;
 

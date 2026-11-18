@@ -5,7 +5,9 @@ import { toast } from "./store";
 export interface Live {
   text: string;
   thinking: string;
+  /** 正在执行的那一次工具调用，以及它开始的时间 */
   activeTool?: string;
+  activeSince?: number;
 }
 
 const emptyLive: Live = { text: "", thinking: "" };
@@ -16,6 +18,8 @@ export interface AgentState {
   messages: AgentMessage[];
   pending: ApprovalRequest[];
   running: Record<string, boolean>;
+  /** 已经点了「停止」、还在等这一轮收尾的会话 */
+  stopping: Record<string, boolean>;
   reviewing: Record<string, boolean>;
   /** 每个会话里等待用户批准的操作数量（包括没有打开的会话） */
   waiting: Record<string, number>;
@@ -56,6 +60,7 @@ function createAgentStore(primary: boolean): AgentStore {
     messages: [],
     pending: [],
     running: {},
+    stopping: {},
     reviewing: {},
     waiting: {},
     live: emptyLive,
@@ -96,7 +101,8 @@ function createAgentStore(primary: boolean): AgentStore {
           tokens: { input: v.inputTokens, output: v.outputTokens },
           running: { ...get().running, [id]: v.running },
           waiting: { ...get().waiting, [id]: (v.pending ?? []).length },
-          live: emptyLive,
+          // 切走再回来时会话可能还在执行某一步：把“正在执行”的状态接上，而不是显示成没做完
+          live: v.running && v.activeTool ? { ...emptyLive, activeTool: v.activeTool, activeSince: v.activeSince || Date.now() } : emptyLive,
           loading: false,
         });
       } catch (e) {
@@ -134,7 +140,9 @@ function createAgentStore(primary: boolean): AgentStore {
 
     stop: () => {
       const id = get().currentId;
-      if (id) api.AgentStop(id);
+      if (!id) return;
+      set({ stopping: { ...get().stopping, [id]: true } });
+      api.AgentStop(id);
     },
 
     remove: async (id) => {
@@ -184,7 +192,7 @@ function createAgentStore(primary: boolean): AgentStore {
       const current = sid === st.currentId;
       switch (e.type) {
         case "done":
-          set({ running: { ...st.running, [sid]: false }, waiting: { ...st.waiting, [sid]: 0 } });
+          set({ running: { ...st.running, [sid]: false }, stopping: { ...st.stopping, [sid]: false }, waiting: { ...st.waiting, [sid]: 0 } });
           if (current) {
             set({ live: emptyLive });
             void get().open(sid);
@@ -260,11 +268,11 @@ function createAgentStore(primary: boolean): AgentStore {
           set({ live: emptyLive });
           break;
         case "tool_start":
-          set({ live: { ...get().live, activeTool: e.toolCall?.id } });
+          set({ live: { ...get().live, activeTool: e.toolCall?.id, activeSince: Date.now() } });
           break;
         case "tool_end":
           push(e.message);
-          set({ live: { ...get().live, activeTool: undefined } });
+          set({ live: { ...get().live, activeTool: undefined, activeSince: undefined } });
           break;
         case "notice":
           push(e.message);

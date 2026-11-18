@@ -123,7 +123,7 @@ func (m *TerminalManager) Open(ctx context.Context, serverID string, cols, rows 
 	if err != nil {
 		return "", err
 	}
-	sess, err := cl.NewSession()
+	sess, err := cl.OpenSession(ctx)
 	if err != nil {
 		cl.Close()
 		return "", fmt.Errorf("打开会话失败: %w", err)

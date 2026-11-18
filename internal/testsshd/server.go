@@ -34,7 +34,35 @@ type Server struct {
 	mu         sync.Mutex
 	authorized map[string]bool
 	routes     map[string]string
+	stalled    bool
 	bash       string
+}
+
+// Stall 让经这台服务器中转（跳板机）的连接不再转发数据，但也不断开：
+// 模拟“跳板机到目标的那一段网络不通了”——本机到跳板机的连接一直是好的，却等不到目标的任何回应。
+func (s *Server) Stall(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stalled = on
+}
+
+// relay 转发数据；处于 Stall 状态时读到的数据直接丢掉。
+func (s *Server) relay(dst io.Writer, src io.Reader) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		s.mu.Lock()
+		drop := s.stalled
+		s.mu.Unlock()
+		if n > 0 && !drop {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // Route 让经过这台服务器中转（跳板机）到 from（"主机:端口"）的连接实际连到 to：
@@ -190,11 +218,11 @@ func (s *Server) handle(c net.Conn, cfg *ssh.ServerConfig) {
 			}
 			go ssh.DiscardRequests(creqs)
 			go func() {
-				_, _ = io.Copy(ch, target)
+				s.relay(ch, target)
 				ch.Close()
 			}()
 			go func() {
-				_, _ = io.Copy(target, ch)
+				s.relay(target, ch)
 				target.Close()
 			}()
 		default:

@@ -55,6 +55,11 @@ func TestDemoEnvironment(t *testing.T) {
 	if _, err := a.SaveServer(ServerInput{Name: "intranet-01", Host: "127.0.0.1", Port: hiddenPort, Username: db.User, AuthType: "password", Password: db.Password, Group: "内网"}); err != nil {
 		t.Fatal(err)
 	}
+	// relay-01 固定经 web-01 中转。在数据目录里放一个名叫 stall 的文件，web-01 就不再转发数据（也不断开），
+	// 用来验收“中转到目标的那一段不通了”时不会卡住、能停下来；删掉文件恢复。
+	if _, err := a.SaveServer(ServerInput{Name: "relay-01", Host: "127.0.0.1", Port: hiddenPort, Username: db.User, AuthType: "password", Password: db.Password, Group: "内网", JumpServerID: w.ID}); err != nil {
+		t.Fatal(err)
+	}
 	// 在 web-01 的主目录里放一些文件，用于验收文件管理
 	for name, body := range map[string]string{
 		"nginx/nginx.conf":         "user www-data;\nworker_processes auto;\n\nhttp {\n    server {\n        listen 443 ssl;\n        server_name app.example.com;\n        ssl_certificate /etc/nginx/ssl/app.crt;\n    }\n}\n",
@@ -97,6 +102,12 @@ func TestDemoEnvironment(t *testing.T) {
 	}
 	c2, k2 := selfSigned(t, "api.example.org")
 	_, _ = a.ImportCert(ImportCertRequest{CertPEM: c2, KeyPEM: k2})
+	// 再放几张证书，分成两个组，另有一张不分组：用于验收证书的分组、折叠和拖动排序
+	for _, x := range [][2]string{{"cdn.example.com", "生产"}, {"staging.example.net", "测试"}, {"dev.example.net", "测试"}, {"mail.example.org", ""}} {
+		cp, kp := selfSigned(t, x[0])
+		_, _ = a.ImportCert(ImportCertRequest{CertPEM: cp, KeyPEM: kp, Group: x[1]})
+	}
+	_ = a.SetCertGroup([]string{cv.ID}, "生产")
 
 	if id, err := a.RunScript(RunRequest{ScriptID: "builtin-sysinfo", ServerIDs: []string{w.ID, d.ID}}); err == nil {
 		waitRun(t, a, id)
@@ -172,6 +183,8 @@ func TestDemoEnvironment(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, "stop")); err == nil {
 			return
 		}
+		_, err := os.Stat(filepath.Join(dir, "stall"))
+		web.Stall(err == nil)
 		time.Sleep(500 * time.Millisecond)
 	}
 }

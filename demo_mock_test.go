@@ -260,6 +260,24 @@ func startMockModel(t *testing.T) string {
 			}
 			return false
 		}
+		// 让 AI 看一台经跳板机连接的服务器（relay-01）：执行一条命令，再根据结果下结论
+		if has("relay-01") {
+			if lastTool == "" {
+				think("先看看这台服务器的负载和磁盘。")
+				text("我先看一下 relay-01 的情况。")
+				call("run_command", `{"servers":["relay-01"],"command":"uptime; df -h / | tail -n 1","reason":"查看负载和磁盘"}`)
+			} else {
+				last, _ := mockContent(body.Messages[len(body.Messages)-1].Content)
+				if strings.Contains(last, "失败") || strings.Contains(last, "没有回应") || strings.Contains(last, "超时") {
+					text("**relay-01 现在连不上**：它是经 web-01 中转的，web-01 能连上，但中转到 relay-01 的那一段没有回应。先确认 relay-01 是否开机、web-01 到它的网络是否正常。")
+				} else {
+					text("**relay-01 运行正常**，负载和磁盘都在正常范围。")
+				}
+				send(map[string]any{}, "stop")
+			}
+			toolOnly()
+			return
+		}
 		// 让 AI 把服务器上的证书收进证书中心：在服务器上找 → 导入 → 结论
 		if mockImportArgs != "" && has("证书中心", "证书库") && has("导入", "收进", "上传到", "下载") && !has("部署到") {
 			switch lastTool {

@@ -103,7 +103,7 @@ func (s *Store) load() error {
 	}
 	b, err := os.ReadFile(s.path())
 	if errors.Is(err, os.ErrNotExist) {
-		s.data = &Data{Version: 1, Settings: DefaultSettings(), AIDefaultV2: true}
+		s.data = &Data{Version: 1, Settings: DefaultSettings(), AIDefaultV2: true, CertOrderV1: true}
 		ensureBuiltinScripts(s.data)
 		ensureQuickCommands(s.data)
 		return s.saveLocked()
@@ -127,6 +127,8 @@ func (s *Store) load() error {
 	}
 	s.sealed = countSealed(&d)
 	migrateAIDefault(&d)
+	migrateCertOrder(&d)
+	d.TidyCertGroups()
 	d.Settings.fillDefaults()
 	ensureBuiltinScripts(&d)
 	ensureQuickCommands(&d)
@@ -199,6 +201,8 @@ func (s *Store) Replace(d *Data) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	migrateAIDefault(d)
+	migrateCertOrder(d)
+	d.TidyCertGroups()
 	d.Settings.fillDefaults()
 	ensureBuiltinScripts(d)
 	ensureQuickCommands(d)

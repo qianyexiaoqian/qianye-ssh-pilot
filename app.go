@@ -23,7 +23,7 @@ import (
 	"sshpilot/internal/store"
 )
 
-const AppVersion = "1.6.0"
+const AppVersion = "1.7.0"
 
 type ServerStatus struct {
 	Status    string `json:"status"` // online | offline | unknown

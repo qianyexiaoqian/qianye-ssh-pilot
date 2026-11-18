@@ -10,10 +10,13 @@ import {
   CircleCheck,
   CircleSlash,
   CircleX,
+  Download,
   FileCode,
   FilePlus,
   FileText,
+  FolderOpen,
   History,
+  KeyRound,
   Layers,
   LoaderCircle,
   Paperclip,
@@ -32,8 +35,10 @@ import {
   Upload,
   User,
   Wrench,
+  Zap,
 } from "lucide-react";
-import type { AgentMessage, ApprovalRequest, Attachment, RecallItem, ToolCall } from "../lib/api";
+import { api, type AgentMessage, type ApprovalRequest, type Attachment, type RecallItem, type ToolCall } from "../lib/api";
+import { useApp } from "../lib/store";
 import { attachPasted, discardAttachments, mergeAttachments, pickAttachments } from "../lib/attach";
 import { cn, formatDate, stripAnsi } from "../lib/format";
 import type { AgentStore } from "../lib/agent";
@@ -66,6 +71,14 @@ const toolMeta: Record<string, { icon: typeof Bot; label: string }> = {
   recall: { icon: History, label: "检索长期记忆" },
   read_attachment: { icon: Paperclip, label: "阅读附件" },
   upload_attachment: { icon: Upload, label: "上传到服务器" },
+  find_certificates: { icon: Search, label: "查找服务器上的证书" },
+  import_certificate: { icon: ShieldCheck, label: "收进证书库" },
+  check_tls: { icon: ShieldCheck, label: "查看线上证书" },
+  save_server: { icon: Server, label: "保存服务器" },
+  list_keys: { icon: KeyRound, label: "查看密钥库" },
+  setup_key_login: { icon: KeyRound, label: "改用密钥登录" },
+  download_file: { icon: Download, label: "下载到这台电脑" },
+  save_quick_command: { icon: Zap, label: "保存快捷命令" },
 };
 
 const memoryTarget: Record<string, string> = { memory: "核心记忆", user: "用户画像", longterm: "长期记忆" };
@@ -122,6 +135,19 @@ function toolSummary(call: ToolCall, names: Record<string, string> = {}): string
       return names[a.attachment] ?? a.attachment ?? "";
     case "upload_attachment":
       return at(`${names[a.attachment] ?? a.attachment ?? ""} → ${a.path ?? ""}`);
+    case "find_certificates":
+    case "setup_key_login":
+      return servers || "当前服务器";
+    case "import_certificate":
+      return [a.certificate, a.cert_path ? at(a.cert_path) : (names[a.cert_attachment] ?? a.cert_attachment), a.name && !a.cert_path && !a.cert_attachment ? `改名为 ${a.name}` : ""].filter(Boolean).join(" · ");
+    case "check_tls":
+      return `${a.host ?? ""}${a.port ? ":" + a.port : ""}${a.sni ? ` · ${a.sni}` : ""}`;
+    case "save_server":
+      return a.server ? `${a.server} · 修改` : `${a.name ?? a.host ?? ""} · 新增`;
+    case "download_file":
+      return at((Array.isArray(a.paths) ? a.paths : [a.path]).filter(Boolean).join("、"));
+    case "save_quick_command":
+      return a.name ?? "";
   }
   return "";
 }
@@ -130,7 +156,10 @@ function ToolCard({ call, result, running, names }: { call: ToolCall; result?: A
   const [open, setOpen] = useState(false);
   const meta = toolMeta[call.name] ?? { icon: Wrench, label: call.name };
   const args = parseArgs(call.arguments);
+  // 用户在对话里给出的密码会出现在工具参数里：展开查看时不把它亮出来
+  if (typeof args.password === "string" && args.password) args.password = "••••••••";
   const rmeta = (result?.meta ?? {}) as Record<string, any>;
+  const go = useApp((s) => s.go);
   const denied = rmeta.kind === "denied";
   const status = !result ? (running ? "running" : "pending") : denied ? "denied" : result.isError ? "error" : "ok";
   const learning = ["memory", "skill_manage", "save_script"].includes(call.name);
@@ -151,6 +180,25 @@ function ToolCard({ call, result, running, names }: { call: ToolCall; result?: A
         )}
         {open ? <ChevronDown size={14} className="shrink-0 text-muted" /> : <ChevronRight size={14} className="shrink-0 text-muted" />}
       </button>
+      {/* 做完之后最可能想做的下一步：直接给一个入口，不用自己去找 */}
+      {status === "ok" && rmeta.kind === "download" && typeof rmeta.dir === "string" && (
+        <div className="flex items-center gap-2 border-t border-line px-3 py-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted" title={rmeta.dir}>
+            已保存到 {rmeta.dir}
+          </span>
+          <Button size="xs" variant="soft" icon={FolderOpen} onClick={() => void api.RevealLocal(rmeta.dir)}>
+            打开文件夹
+          </Button>
+        </div>
+      )}
+      {status === "ok" && rmeta.kind === "cert_import" && typeof rmeta.id === "string" && (
+        <div className="flex items-center gap-2 border-t border-line px-3 py-2">
+          <span className="min-w-0 flex-1 truncate text-[12px] text-muted">证书库 · {rmeta.name}</span>
+          <Button size="xs" variant="soft" icon={ShieldCheck} onClick={() => go("certs", { certId: rmeta.id })}>
+            在证书中心查看
+          </Button>
+        </div>
+      )}
       {open && (
         <div className="space-y-2.5 border-t border-line px-3 py-3">
           {typeof args.command === "string" && <CodeBlock code={args.command} lang="bash" />}

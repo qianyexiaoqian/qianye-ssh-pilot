@@ -6,7 +6,7 @@ import { chartWindow, liveState, useMonitor, useMonitorError, useMonitorWatch, u
 import { toast, useApp } from "../lib/store";
 import { useOpenServerIds } from "../lib/term";
 import { Badge, Button, Callout, Card, Empty, IconButton, Meter, PageHeader, Segmented, Select } from "../components/ui";
-import { ServerAvatar } from "../components/widgets";
+import { ServerAddr, ServerAvatar } from "../components/widgets";
 import { LiveChart, SERIES_COLORS } from "../components/charts";
 
 export const INTERVALS = [1, 2, 3, 5, 10, 30];
@@ -93,9 +93,7 @@ const ServerCard = memo(function ServerCard({ server, online, interval, watching
             <span className="truncate text-[13.5px] font-semibold">{server.name}</span>
             {live && needsAttention(last) && <TriangleAlert size={13} className="shrink-0 text-warn" />}
           </div>
-          <div className="truncate font-mono text-[11.5px] text-muted">
-            {server.username}@{server.host}
-          </div>
+          <ServerAddr server={server} port={false} className="block truncate font-mono text-[11.5px] text-muted" />
         </div>
         <StateBadge state={state} online={online} userPaused={!watching} />
         <div className="flex">

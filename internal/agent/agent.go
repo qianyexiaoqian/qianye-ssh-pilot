@@ -501,10 +501,14 @@ func (tc *ToolContext) Approve(req ApprovalRequest) bool {
 	a.mu.Unlock()
 	a.emit(Event{SessionID: req.SessionID, Type: "approval", Approval: &req})
 
+	var cancelled <-chan struct{}
+	if tc.ctx != nil {
+		cancelled = tc.ctx.Done()
+	}
 	var d approvalDecision
 	select {
 	case d = <-p.ch:
-	case <-tc.ctx.Done():
+	case <-cancelled:
 	case <-time.After(20 * time.Minute):
 	}
 	a.mu.Lock()

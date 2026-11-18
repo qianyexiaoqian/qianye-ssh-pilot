@@ -77,6 +77,16 @@ var mockUploadDir = "/tmp/sshpilot-demo/uploads/"
 // 假模型先看证书库，再用这组参数添加部署目标并部署。为空时不走这个流程。
 var mockTargetArgs = ""
 
+// mockImportArgs 是假模型调用 import_certificate 时填写的参数（JSON）：用户说“把这台的证书收进证书中心”时，
+// 假模型先在服务器上找证书，再用这组参数导入。为空时不走这个流程。
+var mockImportArgs = ""
+
+// mockDownloadArgs 是假模型调用 download_file 时填写的参数（JSON）：用户说“把……下载下来”时使用。
+var mockDownloadArgs = ""
+
+// mockServerArgs 是假模型调用 save_server 时填写的参数（JSON）：用户说“把这台服务器加进来”时使用。
+var mockServerArgs = ""
+
 // mockAttachRe 匹配附件说明里的一行：ID、文件名和类型。
 var mockAttachRe = regexp.MustCompile(`- ([a-f0-9]{16})「([^」]+)」：(文本文件|二进制文件|图片)([^\n]*)`)
 
@@ -234,6 +244,64 @@ func startMockModel(t *testing.T) string {
 				text("图片我这边没有收到内容，只看到了文件名。")
 			}
 			done()
+			return
+		}
+		toolOnly := func() {
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flush()
+		}
+		// 只看用户自己说的话：后面可能跟着程序附上的长期记忆，里面什么词都可能有
+		said, _, _ := strings.Cut(turnText, "<system-reminder>")
+		has := func(words ...string) bool {
+			for _, word := range words {
+				if strings.Contains(said, word) {
+					return true
+				}
+			}
+			return false
+		}
+		// 让 AI 把服务器上的证书收进证书中心：在服务器上找 → 导入 → 结论
+		if mockImportArgs != "" && has("证书中心", "证书库") && has("导入", "收进", "上传到", "下载") && !has("部署到") {
+			switch lastTool {
+			case "":
+				think("先看看这台服务器上有哪些证书、放在哪里。")
+				text("我先找一下这张证书在服务器上的位置。")
+				call("find_certificates", `{"server":"db-01"}`)
+			case "find_certificates":
+				think("证书和私钥的路径清楚了，直接收进证书库，私钥由程序读取。")
+				text("找到了，我把它收进证书中心，")
+				call("import_certificate", mockImportArgs)
+			default:
+				text("**已经收进证书中心了**：以后这张证书在服务器上续期，跟我说一声“更新一下这张证书”就行。需要的话我可以接着把它部署到其他服务器。")
+				send(map[string]any{}, "stop")
+			}
+			toolOnly()
+			return
+		}
+		// 让 AI 把服务器上的文件下载到这台电脑
+		if mockDownloadArgs != "" && has("下载", "导出给我") {
+			if lastTool == "" {
+				think("用户要把服务器上的文件拿到自己的电脑上，用 download_file。")
+				text("好的，我把它下载到你的电脑上，")
+				call("download_file", mockDownloadArgs)
+			} else {
+				text("**下载好了**，文件在「下载」文件夹的 QianYe SSH Pilot 目录里，点上面的「打开文件夹」就能看到。")
+				send(map[string]any{}, "stop")
+			}
+			toolOnly()
+			return
+		}
+		// 让 AI 把一台服务器加进来
+		if mockServerArgs != "" && has("加进来", "添加服务器", "加一台") {
+			if lastTool == "" {
+				think("地址和登录方式都给了，直接添加，保存后会自动测试连接。")
+				text("好的，我把这台服务器加进来，")
+				call("save_server", mockServerArgs)
+			} else {
+				text("**已经加好了**，连接测试通过。在「服务器」页就能看到它，也可以直接让我在上面做事。")
+				send(map[string]any{}, "stop")
+			}
+			toolOnly()
 			return
 		}
 		// 让 AI 把证书部署到一个还没有部署目标的地方：看证书库 → 添加部署目标并部署 → 结论

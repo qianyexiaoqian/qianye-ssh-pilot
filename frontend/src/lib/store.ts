@@ -38,6 +38,8 @@ interface AppState {
   settings: Settings | null;
   theme: "dark" | "light";
   sidebarCollapsed: boolean;
+  /** 隐私模式：界面上不显示服务器的连接地址（截图、录屏、投屏时用） */
+  privacy: boolean;
   /** 启动密码的状态；null 表示还没有读到 */
   lock: LockState | null;
   /** 正在生效的临时线路，按服务器 ID 索引 */
@@ -56,6 +58,7 @@ interface AppState {
   setStatus: (s: Record<string, ServerStatus>) => void;
   setTheme: (t: "dark" | "light") => void;
   toggleSidebar: () => void;
+  setPrivacy: (on: boolean) => void;
 
   terms: TermTab[];
   activeTerm: string | null;
@@ -80,6 +83,7 @@ export const useApp = create<AppState>((set, get) => ({
   settings: null,
   theme: (localStorage.getItem("theme") as "dark" | "light") || "dark",
   sidebarCollapsed: localStorage.getItem("sidebar") === "collapsed",
+  privacy: localStorage.getItem("privacy") === "1",
   lock: null,
   routes: {},
   routeFor: null,
@@ -130,6 +134,10 @@ export const useApp = create<AppState>((set, get) => ({
     localStorage.setItem("sidebar", v ? "collapsed" : "expanded");
     set({ sidebarCollapsed: v });
   },
+  setPrivacy: (on) => {
+    localStorage.setItem("privacy", on ? "1" : "0");
+    set({ privacy: on });
+  },
 
   terms: [],
   activeTerm: null,
@@ -157,6 +165,11 @@ export const useApp = create<AppState>((set, get) => ({
   reconnectTab: (key) =>
     set((st) => ({ terms: st.terms.map((t) => (t.key === key ? { ...t, state: "connecting", termId: undefined, message: undefined, seq: t.seq + 1 } : t)) })),
 }));
+
+// 文件管理是另一个窗口：在主窗口里切换隐私模式时跟着变
+window.addEventListener("storage", (e) => {
+  if (e.key === "privacy") useApp.setState({ privacy: e.newValue === "1" });
+});
 
 // ---- 全局提示 ----
 

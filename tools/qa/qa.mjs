@@ -12,6 +12,8 @@
 //   node qa.mjs <main|files> shot <out.png>              截图
 //   node qa.mjs <main|files> drop <x> <y> <本地路径...>  模拟把文件 / 文件夹拖到窗口的 (x, y) 处
 //       （环境变量 DRAG_SHOT=<png> 可以保存鼠标悬停、还没松开时的截图）
+//   node qa.mjs <main|files> mouse <步骤...>             模拟鼠标按住、拖动、松开（验收拖动排序），例如：
+//       node qa.mjs main mouse "down 300 200" "wait 300" "move 700 200 12" "shot drag.png" "up"
 import fs from "node:fs";
 import path from "node:path";
 
@@ -85,7 +87,44 @@ if (a0 === "list") {
   }
   await cdp(port, "Input.dispatchDragEvent", { type: "drop", x, y, data });
   console.log("dropped", data.files.length, "item(s) at", x, y);
+} else if (cmd === "mouse") {
+  // 模拟鼠标操作（按住、拖动、松开），用来验收拖动排序这类只认真实指针事件的交互；不会动到真实的鼠标指针。
+  // 每个参数是一步："down x y" | "move x y [步数]" | "up [x y]" | "wait 毫秒" | "shot 文件.png"
+  const port = await pick(a0);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let x = 0, y = 0, pressed = false;
+  const send = (type) => cdp(port, "Input.dispatchMouseEvent", { type, x, y, button: pressed || type !== "mouseMoved" ? "left" : "none", buttons: pressed && type !== "mouseReleased" ? 1 : 0, clickCount: type === "mouseMoved" ? 0 : 1, pointerType: "mouse" });
+  for (const step of args) {
+    const [op, ...v] = step.trim().split(/\s+/);
+    if (op === "down") {
+      [x, y] = v.map(Number);
+      await send("mouseMoved");
+      pressed = true;
+      await send("mousePressed");
+    } else if (op === "move") {
+      const [tx, ty, n = 8] = v.map(Number);
+      const sx = x, sy = y;
+      for (let i = 1; i <= n; i++) {
+        x = sx + ((tx - sx) * i) / n;
+        y = sy + ((ty - sy) * i) / n;
+        await send("mouseMoved");
+        await sleep(16);
+      }
+    } else if (op === "up") {
+      if (v.length >= 2) [x, y] = v.map(Number);
+      await send("mouseReleased");
+      pressed = false;
+    } else if (op === "wait") {
+      await sleep(Number(v[0]));
+    } else if (op === "shot") {
+      const r = await cdp(port, "Page.captureScreenshot", { format: "png" });
+      fs.writeFileSync(v[0], Buffer.from(r.data, "base64"));
+    } else {
+      throw new Error(`不认识的步骤：${step}`);
+    }
+  }
+  console.log("mouse:", args.length, "step(s)");
 } else {
-  console.log("用法：node qa.mjs list | <main|files> eval <js> | shot <png> | drop <x> <y> <路径...>");
+  console.log("用法：node qa.mjs list | <main|files> eval <js> | shot <png> | drop <x> <y> <路径...> | mouse <步骤...>");
 }
 process.exit(0);

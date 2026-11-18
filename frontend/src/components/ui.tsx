@@ -13,7 +13,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, CircleAlert, CircleCheck, Copy, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, CircleCheck, Copy, Eye, EyeOff, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { cn } from "../lib/format";
 import { runtime } from "../lib/api";
 
@@ -132,6 +132,28 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input({ i
     </div>
   );
 });
+
+/** 密码输入框：内容默认遮住，点眼睛才显示；copyTip 不为空时，里面有内容就可以直接复制（不用先显示出来） */
+export function PasswordInput({ copyTip, className, ...rest }: Omit<InputProps, "type" | "right" | "mono"> & { copyTip?: string }) {
+  const [show, setShow] = useState(false);
+  const value = typeof rest.value === "string" ? rest.value : "";
+  const canCopy = !!copyTip && !!value;
+  return (
+    <Input
+      autoComplete="off"
+      {...rest}
+      mono={show}
+      type={show ? "text" : "password"}
+      className={cn(canCopy && "pr-[68px]", className)}
+      right={
+        <div className="flex items-center">
+          <IconButton size="sm" icon={show ? EyeOff : Eye} tip={show ? "遮住" : "显示"} onClick={() => setShow((v) => !v)} />
+          {canCopy && <CopyButton text={value} tip={copyTip} />}
+        </div>
+      }
+    />
+  );
+}
 
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   mono?: boolean;

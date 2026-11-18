@@ -10,6 +10,7 @@ import { DropHint, useAttachDrop } from "./Attachments";
 import { ChatThread, Composer, useStickToBottom } from "./Chat";
 import { readTermText, typeIntoTerm } from "./XTermView";
 import { Button, IconButton, Menu } from "./ui";
+import { useAddr } from "./widgets";
 
 // 每台服务器上次使用的对话：切换终端标签时回到各自的对话
 const SESSIONS_KEY = "ops-sessions";
@@ -52,6 +53,7 @@ function lineCount(text: string) {
  */
 export function OpsPanel({ tab, onClose, maxWidth }: { tab: TermTab | undefined; onClose: () => void; maxWidth?: number }) {
   const { servers, settings, go } = useApp();
+  const addr = useAddr();
   const ops = useOpsAgent();
   const { attach, setAttach } = useTermUI();
   const [input, setInput] = useState("");
@@ -156,7 +158,7 @@ export function OpsPanel({ tab, onClose, maxWidth }: { tab: TermTab | undefined;
         <Bot size={14} className="shrink-0 text-accent" />
         <span className="shrink-0 text-[12.5px] font-semibold">AI 运维</span>
         {server && (
-          <span className="ml-1 inline-flex min-w-0 items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11.5px] text-fg2" title={`AI 默认操作这台服务器：${server.username}@${server.host}`}>
+          <span className="ml-1 inline-flex min-w-0 items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11.5px] text-fg2" title={`AI 默认操作这台服务器：${addr(server, { port: false })}`}>
             <SquareTerminal size={11} className="shrink-0 text-muted" />
             <span className="truncate">{server.name}</span>
           </span>

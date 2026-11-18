@@ -163,6 +163,9 @@ func (a *App) attachTools() []*agent.Tool {
 				if err != nil {
 					return nil, fmt.Errorf("读取「%s」失败：%v", att.Name, err)
 				}
+				if agent.IsPrivateKeyText(text) {
+					return nil, fmt.Errorf("「%s」%s", att.Name, agent.PrivateKeyHint)
+				}
 				lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 				start := max(in.StartLine, 1)
 				if start > len(lines) {

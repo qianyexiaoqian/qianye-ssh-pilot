@@ -27,3 +27,5 @@ func idleSeconds() int { return 0 }
 func systemProxy() (string, bool) { return "", false }
 
 func installResizeBorders() bool { return false }
+
+func systemDownloadsDir() string { return "" }

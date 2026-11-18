@@ -434,6 +434,10 @@ export function ReorderQuickCommands(arg1) {
   return window['go']['main']['App']['ReorderQuickCommands'](arg1);
 }
 
+export function ReorderServers(arg1) {
+  return window['go']['main']['App']['ReorderServers'](arg1);
+}
+
 export function ResetLock() {
   return window['go']['main']['App']['ResetLock']();
 }

@@ -8,6 +8,7 @@ import {
   CircleX,
   FileCode,
   FolderOpen,
+  HatGlasses,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -40,6 +41,7 @@ import { useViewport } from "../lib/viewport";
 import { useWindowState } from "../lib/chrome";
 import type { Server as ServerModel } from "../lib/api";
 import { Button, Kbd, StatusDot } from "./ui";
+import { ADDR_MASK, useScrub } from "./widgets";
 
 export const PRODUCT = "QianYe SSH Pilot";
 export const AUTHOR = "Qian Ye";
@@ -307,6 +309,7 @@ export function TitleBar({ onSearch }: { onSearch: () => void }) {
 /** 文件管理独立窗口的标题栏 */
 export function FilesTitleBar({ server }: { server: ServerModel | undefined }) {
   const width = useViewport((s) => s.width);
+  const privacy = useApp((s) => s.privacy);
   return (
     <header className="drag flex h-[40px] shrink-0 items-center border-b border-line bg-bg2" onDoubleClick={() => runtime.WindowToggleMaximise()}>
       <div className="flex min-w-0 flex-1 items-center gap-2.5 pl-3.5">
@@ -317,8 +320,8 @@ export function FilesTitleBar({ server }: { server: ServerModel | undefined }) {
             <span className="h-3.5 w-px shrink-0 bg-line2" />
             <span className="truncate font-medium text-fg2">{server.name}</span>
             {width >= 620 && (
-              <span className="truncate font-mono text-[11.5px] text-muted" title={`以 ${server.username} 的身份访问`}>
-                {server.username}@{server.host}
+              <span className="truncate font-mono text-[11.5px] text-muted" title={privacy ? undefined : `以 ${server.username} 的身份访问`}>
+                {privacy ? ADDR_MASK : `${server.username}@${server.host}`}
               </span>
             )}
           </span>
@@ -342,6 +345,7 @@ function WinButton({ onClick, icon, danger, title }: { onClick: () => void; icon
 
 export function Toaster() {
   const { toasts, dismiss } = useToasts();
+  const scrub = useScrub();
   return (
     <div className="pointer-events-none fixed right-3 bottom-3 z-[70] flex w-[min(360px,calc(100vw-24px))] flex-col gap-2 sm:right-5 sm:bottom-5">
       {toasts.map((t) => {
@@ -351,8 +355,8 @@ export function Toaster() {
           <div key={t.id} className="pointer-events-auto flex animate-slide-up items-start gap-3 rounded-xl border border-line2 bg-panel2 px-3.5 py-3 shadow-2xl">
             <Icon size={17} className={cn("mt-0.5 shrink-0", color)} />
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium text-fg">{t.title}</div>
-              {t.message && <div className="mt-0.5 line-clamp-4 text-[12px] leading-relaxed break-words text-muted">{t.message}</div>}
+              <div className="text-[13px] font-medium text-fg">{scrub(t.title)}</div>
+              {t.message && <div className="mt-0.5 line-clamp-4 text-[12px] leading-relaxed break-words text-muted">{scrub(t.message)}</div>}
             </div>
             <button type="button" className="text-muted hover:text-fg" onClick={() => dismiss(t.id)}>
               <X size={14} />
@@ -414,13 +418,15 @@ interface PaletteItem {
   id: string;
   label: string;
   hint?: string;
+  /** 搜索时额外匹配的文字（隐私模式下提示里的地址被遮住了，但仍然可以按地址搜索） */
+  search?: string;
   icon: LucideIcon;
   run: () => void;
   status?: string;
 }
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { servers, status, go, openTerminal } = useApp();
+  const { servers, status, go, openTerminal, privacy, setPrivacy } = useApp();
   const quick = useQuick((s) => s.commands);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
@@ -442,7 +448,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const conn: PaletteItem[] = servers.map((s) => ({
       id: "srv-" + s.id,
       label: s.name,
-      hint: `${s.username}@${s.host}:${s.port}  ·  打开终端`,
+      hint: `${privacy ? ADDR_MASK : `${s.username}@${s.host}:${s.port}`}  ·  打开终端`,
+      search: `${s.username}@${s.host}:${s.port}`,
       icon: SquareTerminal,
       status: status[s.id]?.status,
       run: () => openTerminal(s.id),
@@ -453,6 +460,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "act-add", label: "添加服务器", icon: Server, run: () => go("servers", { add: Date.now() }) },
       { id: "act-cert", label: "导入证书", icon: ShieldCheck, run: () => go("certs", { import: Date.now() }) },
       { id: "act-quick", label: "添加快捷命令", icon: Zap, run: () => useQuick.getState().edit({}) },
+      { id: "act-privacy", label: privacy ? "关闭隐私模式" : "开启隐私模式", hint: privacy ? "重新显示服务器地址" : "隐藏服务器地址，截图、录屏时用", icon: HatGlasses, run: () => setPrivacy(!privacy) },
     ];
     // 快捷命令：有已连接的终端时发送到当前终端，否则选择服务器批量执行
     const cmds: PaletteItem[] = quick.map((c) => ({
@@ -465,8 +473,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const kw = q.trim().toLowerCase();
     // 没有输入时不列出快捷命令，避免把服务器和页面挤到后面
     if (!kw) return [...conn, ...actions, ...pages].slice(0, 40);
-    return [...conn, ...actions, ...pages, ...cmds].filter((i) => (i.label + " " + (i.hint ?? "")).toLowerCase().includes(kw)).slice(0, 40);
-  }, [q, servers, status, go, openTerminal, quick]);
+    return [...conn, ...actions, ...pages, ...cmds].filter((i) => [i.label, i.hint, i.search].join(" ").toLowerCase().includes(kw)).slice(0, 40);
+  }, [q, servers, status, go, openTerminal, quick, privacy, setPrivacy]);
   if (!open) return null;
   const run = (i: PaletteItem) => {
     onClose();

@@ -4,7 +4,7 @@ import { api, on, type Finding, type Report } from "../lib/api";
 import { cn, formatDuration, timeAgo } from "../lib/format";
 import { toast, useApp } from "../lib/store";
 import { Badge, Button, Card, Empty, Meter, PageHeader, Segmented, SectionTitle, Select } from "../components/ui";
-import { ServerPicker } from "../components/widgets";
+import { ServerPicker, useScrub } from "../components/widgets";
 import { healthLabel, runFinding, severityMeta } from "./Dashboard";
 
 const AUTO_OPTIONS = [
@@ -17,6 +17,7 @@ const AUTO_OPTIONS = [
 
 export default function Inspect() {
   const { params, go, settings, loadSettings } = useApp();
+  const scrub = useScrub();
   const auto = settings?.general.inspectInterval ?? 0;
   const setAuto = async (mins: number) => {
     try {
@@ -239,8 +240,8 @@ export default function Inspect() {
                                   <Badge>{f.category}</Badge>
                                   {f.serverName && <span className="text-[12px] text-muted">{f.serverName}</span>}
                                 </div>
-                                <div className="mt-1.5 text-[13.5px] font-medium text-fg">{f.title}</div>
-                                {f.detail && <div className="mt-0.5 text-[12.5px] break-all text-fg2">{f.detail}</div>}
+                                <div className="mt-1.5 text-[13.5px] font-medium text-fg">{scrub(f.title)}</div>
+                                {f.detail && <div className="mt-0.5 text-[12.5px] break-all text-fg2">{scrub(f.detail)}</div>}
                                 {f.suggestion && <div className="mt-1.5 text-[12.5px] text-muted">建议：{f.suggestion}</div>}
                               </div>
                               <div className="flex shrink-0 gap-1.5">
@@ -296,7 +297,7 @@ export default function Inspect() {
                                 <td className="px-4 py-3 font-medium">{s.serverName}</td>
                                 <td colSpan={5} className="px-4 py-3 text-bad">
                                   <span className="inline-flex items-center gap-1.5">
-                                    <WifiOff size={13} /> {s.error || "无法连接"}
+                                    <WifiOff size={13} /> {scrub(s.error) || "无法连接"}
                                   </span>
                                 </td>
                               </tr>

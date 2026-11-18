@@ -162,7 +162,7 @@ func (a *App) runForAgent(ctx context.Context, servers []store.Server, p *runPla
 }
 
 func (a *App) opsTools() []*agent.Tool {
-	return slices.Concat(a.serverTools(), a.targetTools(), a.attachTools())
+	return slices.Concat(a.serverTools(), a.targetTools(), a.certTools(), a.attachTools(), a.manageTools())
 }
 
 func (a *App) serverTools() []*agent.Tool {
@@ -440,7 +440,7 @@ func (a *App) serverTools() []*agent.Tool {
 			Handler: func(_ context.Context, _ *agent.ToolContext, _ json.RawMessage) (*agent.ToolResult, error) {
 				list := a.ListCerts()
 				if len(list) == 0 {
-					return &agent.ToolResult{Content: "证书库为空。"}, nil
+					return &agent.ToolResult{Content: "证书库为空。服务器上已有的证书可以用 find_certificates 查找、import_certificate 导入；用户也可以把证书和私钥文件直接发过来。"}, nil
 				}
 				var b strings.Builder
 				for _, c := range list {

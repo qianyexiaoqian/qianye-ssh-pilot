@@ -222,6 +222,8 @@ export function RenamePublicKey(arg1:string,arg2:string):Promise<void>;
 
 export function ReorderQuickCommands(arg1:Array<string>):Promise<void>;
 
+export function ReorderServers(arg1:Array<string>):Promise<void>;
+
 export function ResetLock():Promise<main.ResetLockResult>;
 
 export function RestoreSkill(arg1:string):Promise<void>;

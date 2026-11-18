@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Globe, Laptop, Plug, Radar, Route, SquareTerminal, Waypoints } from "lucide-react";
 import { api, type ProxyConfig, type ProxyInput, type RouteInput, type Server, type TestResult } from "../lib/api";
 import { toast, useApp } from "../lib/store";
-import { Button, Callout, Field, Input, Modal, Segmented, Select, Switch } from "./ui";
+import { useAddr } from "./widgets";
+import { Button, Callout, Field, Input, Modal, PasswordInput, Segmented, Select, Switch } from "./ui";
 
 // ---- 代理表单（服务器设置和线路对话框共用） ----
 
@@ -126,7 +127,7 @@ export function ProxyFields({ value, onChange }: { value: ProxyForm; onChange: (
               <Input mono value={value.username} onChange={(e) => set({ username: e.target.value, saved: false })} placeholder="代理不需要认证就留空" autoComplete="off" />
             </Field>
             <Field label="密码（可选）">
-              <Input mono value={value.password} onChange={(e) => set({ password: e.target.value })} placeholder={value.saved ? "已保存，留空表示不修改" : ""} autoComplete="off" />
+              <PasswordInput value={value.password} onChange={(e) => set({ password: e.target.value })} placeholder={value.saved ? "已保存，留空表示不修改" : ""} copyTip="复制代理密码" />
             </Field>
           </div>
         </>
@@ -145,7 +146,8 @@ function savedRouteText(s: Server, servers: Server[]): string {
 
 /** 为一台服务器选择连接线路：直连不通时临时走跳板机或代理，也可以保存为固定线路。由 useApp().openRoute 打开。 */
 export function RouteDialog() {
-  const { routeFor, openRoute, servers, status, routes, settings, loadRoutes, loadServers, loadSettings, openTerminal, reconnectTab, setActiveTerm, go } = useApp();
+  const { routeFor, openRoute, servers, status, routes, settings, loadRoutes, loadServers, loadSettings, openTerminal, reconnectTab, setActiveTerm, go, privacy } = useApp();
+  const addr = useAddr();
   const server = servers.find((s) => s.id === routeFor);
   const [mode, setMode] = useState<RouteInput["mode"]>("jump");
   const [jumpId, setJumpId] = useState("");
@@ -232,7 +234,7 @@ export function RouteDialog() {
       open
       onClose={close}
       title={`连接线路 · ${server.name}`}
-      description={`${server.username}@${server.host}:${server.port}　直连不通时，可以换一条线路连接这台服务器。`}
+      description={`${addr(server)}　直连不通时，可以换一条线路连接这台服务器。`}
       icon={Route}
       size="md"
       footer={
@@ -287,10 +289,10 @@ export function RouteDialog() {
         {mode === "jump" &&
           (others.length === 0 ? (
             <Callout tone="info" title="还没有可以当跳板机的服务器">
-              跳板机是另一台已经添加到这里、并且能访问 {server.host} 的服务器。先添加它，或者改用代理。
+              跳板机是另一台已经添加到这里、并且能访问 {privacy ? "这台服务器" : server.host} 的服务器。先添加它，或者改用代理。
             </Callout>
           ) : (
-            <Field label="跳板机" hint={`先登录跳板机，再从它连到 ${server.host}:${server.port}（相当于 ssh -J）。跳板机需要能访问这台服务器。`}>
+            <Field label="跳板机" hint={`先登录跳板机，再从它连到 ${privacy ? "这台服务器" : `${server.host}:${server.port}`}（相当于 ssh -J）。跳板机需要能访问这台服务器。`}>
               <Select
                 value={jumpId}
                 onChange={(e) => {
@@ -301,7 +303,9 @@ export function RouteDialog() {
                 {others.map((s) => (
                   <option key={s.id} value={s.id}>
                     {status[s.id]?.status === "online" ? "● " : status[s.id]?.status === "offline" ? "○ " : ""}
-                    {s.name}（{s.host}）{status[s.id]?.status === "offline" ? " · 不可达" : ""}
+                    {s.name}
+                    {privacy ? "" : `（${s.host}）`}
+                    {status[s.id]?.status === "offline" ? " · 不可达" : ""}
                   </option>
                 ))}
               </Select>
@@ -316,7 +320,7 @@ export function RouteDialog() {
             }}
           />
         )}
-        {mode === "direct" && <div className="text-[12.5px] leading-relaxed text-muted">不经过跳板机和代理，直接连接 {server.host}:{server.port}。</div>}
+        {mode === "direct" && <div className="text-[12.5px] leading-relaxed text-muted">不经过跳板机和代理，直接连接{privacy ? "这台服务器" : ` ${server.host}:${server.port}`}。</div>}
 
         <div className="flex items-center justify-between gap-4 rounded-xl border border-line bg-bg2/40 px-3.5 py-3">
           <div>

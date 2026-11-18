@@ -110,6 +110,15 @@ func idleSeconds() int {
 	return int((uint32(tick) - info.time) / 1000)
 }
 
+// systemDownloadsDir 返回当前用户的「下载」文件夹。用户可能把它挪到了别的盘，所以问系统，而不是自己拼路径。
+func systemDownloadsDir() string {
+	p, err := windows.KnownFolderPath(windows.FOLDERID_Downloads, 0)
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
 // systemProxy 读取 Windows 的系统代理设置（代理软件开启「系统代理」后会写在这里）。
 func systemProxy() (server string, ok bool) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)

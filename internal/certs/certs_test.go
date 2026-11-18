@@ -220,6 +220,29 @@ func TestDeployBackupVerifyAndRollback(t *testing.T) {
 	if d := found[2]; d.CertPath != "/etc/xboard-node/certs/missing.pem" || d.KeyPath != "" || d.Error == "" {
 		t.Errorf("relative path: %+v", d)
 	}
+
+	// 1Panel：网站证书放在面板自己的目录里（OpenResty 跑在容器里，宿主机上没有 nginx 命令可问）
+	site := dir + "/1panel/sites/shop.example.com/ssl"
+	for p, text := range map[string]string{
+		site + "/fullchain.pem": cert(v2).CertPEM,
+		site + "/privkey.pem":   cert(v2).KeyPEM,
+		// 只有证书没有私钥的目录不算
+		dir + "/1panel/sites/half.example.com/ssl/fullchain.pem": cert(v2).CertPEM,
+	} {
+		if err := pool.WriteFile(ctx, "s1", p, []byte(text), "600", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldDirs := certs.OnePanelSiteDirs
+	certs.OnePanelSiteDirs = []string{dir + "/1panel/absent/*/ssl", dir + "/1panel/sites/*/ssl"}
+	defer func() { certs.OnePanelSiteDirs = oldDirs }()
+	found, err = certs.Discover(ctx, pool, "s1")
+	if err != nil || len(found) != 4 {
+		t.Fatalf("discover 1panel: %+v %v", found, err)
+	}
+	if d := found[3]; d.Source != "1panel" || d.CertPath != site+"/fullchain.pem" || d.KeyPath != site+"/privkey.pem" || d.Fingerprint != p2.Fingerprint || d.Error != "" {
+		t.Errorf("1panel site cert: %+v", d)
+	}
 }
 
 func stepMsg(r certs.DeployResult, step string) string {

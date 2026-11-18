@@ -14,6 +14,7 @@ import {
   FolderOpen,
   Globe,
   HardDrive,
+  HatGlasses,
   KeyRound,
   LayoutGrid,
   List,
@@ -36,6 +37,7 @@ import {
 } from "lucide-react";
 import { api, runtime, type AuthorizedKeyView, type PublicKeyView, type Server, type ServerInfo, type ServerSecrets, type TestResult } from "../lib/api";
 import { cn, formatBytes, formatDuration, formatRate, parseSSHTarget, timeAgo, usageTone } from "../lib/format";
+import { SortOverlay, useSortable } from "../lib/sortable";
 import { chartWindow, liveState, useMonitorError, useMonitorWatch, useNow, useSeries } from "../lib/monitor";
 import { openFilesWindow, useOpenServerIds } from "../lib/term";
 import { confirm, toast, useApp } from "../lib/store";
@@ -54,6 +56,7 @@ import {
   Meter,
   Modal,
   PageHeader,
+  PasswordInput,
   Segmented,
   Select,
   Spinner,
@@ -63,13 +66,13 @@ import {
   TagInput,
   Textarea,
 } from "../components/ui";
-import { KV, ServerAvatar } from "../components/widgets";
+import { CopyText, KV, ServerAddr, ServerAvatar, useAddr, useMask, useScrub } from "../components/widgets";
 import { OpResultList } from "../components/QuickRun";
 import { emptyProxy, noProxy, ProxyFields, proxyFormOf, proxyInputOf, proxyText, type ProxyForm } from "../components/RouteDialog";
 import { LiveChart, niceMax, SERIES_COLORS } from "../components/charts";
 
 export default function Servers() {
-  const { servers, status, routes, loadServers, loadRoutes, params, openTerminal, openRoute } = useApp();
+  const { servers, status, routes, loadServers, loadRoutes, params, openTerminal, openRoute, privacy, setPrivacy } = useApp();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("all");
   const [view, setView] = useState<"grid" | "list">((localStorage.getItem("servers-view") as "grid" | "list") || "grid");
@@ -141,6 +144,20 @@ export default function Servers() {
     await loadRoutes();
     toast.ok("已取消临时线路", s.name);
   };
+  // 按住卡片拖动调整先后顺序。筛选或搜索之后拖的只是看得见的这几台：它们按新的顺序排进原来占着的位置
+  const reorder = (ids: string[]) => {
+    const moved = new Set(ids);
+    const next = ids.map((id) => servers.find((s) => s.id === id)).filter((s): s is Server => !!s);
+    let i = 0;
+    useApp.setState({ servers: servers.map((s) => (moved.has(s.id) ? next[i++] : s)) });
+    api.ReorderServers(ids).catch((e) => {
+      toast.error("调整顺序失败", e);
+      void loadServers();
+    });
+  };
+  const sortable = useSortable({ ids: list.map((s) => s.id), onReorder: reorder });
+  const byId = new Map(list.map((s) => [s.id, s]));
+
   const menu = (s: Server) => [
     { label: "编辑", icon: Pencil, onClick: () => setEditing(s) },
     { label: "文件管理", icon: FolderOpen, onClick: () => void openFilesWindow(s.id) },
@@ -153,6 +170,73 @@ export default function Servers() {
     { label: "", onClick: () => {}, divider: true },
     { label: "删除", icon: Trash2, danger: true, onClick: () => remove(s) },
   ];
+
+  // 一张服务器卡片。slot：正在被拖动，原地只留一个空位；ghost：跟着指针走的那一份
+  const card = (s: Server, mode: "normal" | "slot" | "ghost") => {
+    const st = status[s.id];
+    return (
+      <Card className={cn("group flex w-full flex-col p-4 transition-[border-color,box-shadow] hover:border-line2 hover:shadow-lg", mode === "slot" && "invisible", mode === "ghost" && "h-full border-accent/40")}>
+        <div className="flex items-start gap-3">
+          <ServerAvatar name={s.name} size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <CopyText value={s.name} what="名称" className="text-[14px] font-semibold">
+                {s.name}
+              </CopyText>
+              <StatusDot status={st?.status} />
+            </div>
+            <div className="mt-0.5 flex">
+              <ServerAddr server={s} copy className="font-mono text-[12px] text-muted" />
+            </div>
+          </div>
+          <Menu trigger={<IconButton icon={Ellipsis} size="sm" />} items={menu(s)} />
+        </div>
+        <div className="mt-3 flex min-h-[22px] flex-wrap gap-1.5">
+          {s.group && <Badge tone="accent">{s.group}</Badge>}
+          <Badge icon={s.authType === "key" ? KeyRound : Lock}>{s.authType === "key" ? "密钥" : "密码"}</Badge>
+          {s.useSudo && <Badge tone="info">sudo</Badge>}
+          {routes[s.id] ? (
+            <Badge tone="warn" icon={Route} title={`临时线路：${routes[s.id].label}。通过它打开的终端和文件管理窗口全部关闭后自动取消`}>
+              临时 · {routes[s.id].label}
+            </Badge>
+          ) : (
+            <>
+              {s.jumpServerId && <Badge icon={Route}>跳板机</Badge>}
+              {s.proxy && !s.jumpServerId && (
+                <Badge icon={Globe} title={proxyText(s.proxy)}>
+                  代理
+                </Badge>
+              )}
+            </>
+          )}
+          {(s.tags ?? []).slice(0, 3).map((t) => (
+            <Badge key={t}>{t}</Badge>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2 text-[12px] text-muted">
+          <span className="truncate" title={s.os ? undefined : "连接一次（终端、测试连接或查看详情）后就能识别出系统"}>
+            {s.os || "系统未知"}
+          </span>
+          {st?.status === "offline" ? (
+            <button type="button" className="shrink-0 text-bad hover:underline" title="直连不通时，可以临时经跳板机或代理连接" onClick={() => openRoute(s.id)}>
+              不可达 · 换线路
+            </button>
+          ) : (
+            <span className="shrink-0">{st?.status === "online" ? `${st.latency} ms` : "检测中"}</span>
+          )}
+        </div>
+        <div className="mt-4 flex gap-2 border-t border-line pt-3">
+          <Button size="sm" variant="primary" icon={SquareTerminal} className="flex-1" onClick={() => openTerminal(s.id)}>
+            终端
+          </Button>
+          <Button size="sm" icon={Activity} className="flex-1" onClick={() => setDetail(s)}>
+            详情
+          </Button>
+          <IconButton icon={Plug} tip="测试连接" loading={testing[s.id]} onClick={() => test(s)} />
+        </div>
+      </Card>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -183,6 +267,7 @@ export default function Servers() {
                 { value: "list", label: "", icon: List },
               ]}
             />
+            <IconButton icon={HatGlasses} active={privacy} tip={privacy ? "隐私模式已开启" : "隐私模式：隐藏地址"} onClick={() => setPrivacy(!privacy)} data-privacy-toggle />
             <IconButton icon={RefreshCw} tip="刷新状态" onClick={() => api.RefreshStatus()} />
             <Button variant="primary" icon={Plus} onClick={() => setEditing(null)}>
               添加服务器
@@ -207,71 +292,27 @@ export default function Servers() {
         ) : list.length === 0 ? (
           <Empty icon={Search} title="没有匹配的服务器" />
         ) : view === "grid" ? (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(310px,100%),1fr))] gap-4">
-            {list.map((s) => {
-              const st = status[s.id];
-              return (
-                <Card key={s.id} className="group flex flex-col p-4 transition-all hover:border-line2 hover:shadow-lg">
-                  <div className="flex items-start gap-3">
-                    <ServerAvatar name={s.name} size={40} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-[14px] font-semibold">{s.name}</span>
-                        <StatusDot status={st?.status} />
-                      </div>
-                      <div className="mt-0.5 truncate font-mono text-[12px] text-muted">
-                        {s.username}@{s.host}:{s.port}
-                      </div>
-                    </div>
-                    <Menu trigger={<IconButton icon={Ellipsis} size="sm" />} items={menu(s)} />
+          <>
+            <div className="relative grid grid-cols-[repeat(auto-fill,minmax(min(310px,100%),1fr))] gap-4" data-server-grid>
+              {sortable.order.map((id) => {
+                const s = byId.get(id);
+                if (!s) return null;
+                const lifted = sortable.draggingId === id;
+                return (
+                  <div key={id} {...sortable.itemProps(id)} className={cn("flex min-w-0", lifted && "rounded-2xl outline-2 -outline-offset-2 outline-accent/45 outline-dashed")}>
+                    {card(s, lifted ? "slot" : "normal")}
                   </div>
-                  <div className="mt-3 flex min-h-[22px] flex-wrap gap-1.5">
-                    {s.group && <Badge tone="accent">{s.group}</Badge>}
-                    <Badge icon={s.authType === "key" ? KeyRound : Lock}>{s.authType === "key" ? "密钥" : "密码"}</Badge>
-                    {s.useSudo && <Badge tone="info">sudo</Badge>}
-                    {routes[s.id] ? (
-                      <Badge tone="warn" icon={Route} title={`临时线路：${routes[s.id].label}。通过它打开的终端和文件管理窗口全部关闭后自动取消`}>
-                        临时 · {routes[s.id].label}
-                      </Badge>
-                    ) : (
-                      <>
-                        {s.jumpServerId && <Badge icon={Route}>跳板机</Badge>}
-                        {s.proxy && !s.jumpServerId && (
-                          <Badge icon={Globe} title={proxyText(s.proxy)}>
-                            代理
-                          </Badge>
-                        )}
-                      </>
-                    )}
-                    {(s.tags ?? []).slice(0, 3).map((t) => (
-                      <Badge key={t}>{t}</Badge>
-                    ))}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2 text-[12px] text-muted">
-                    <span className="truncate" title={s.os ? undefined : "连接一次（终端、测试连接或查看详情）后就能识别出系统"}>
-                      {s.os || "系统未知"}
-                    </span>
-                    {st?.status === "offline" ? (
-                      <button type="button" className="shrink-0 text-bad hover:underline" title="直连不通时，可以临时经跳板机或代理连接" onClick={() => openRoute(s.id)}>
-                        不可达 · 换线路
-                      </button>
-                    ) : (
-                      <span className="shrink-0">{st?.status === "online" ? `${st.latency} ms` : "检测中"}</span>
-                    )}
-                  </div>
-                  <div className="mt-4 flex gap-2 border-t border-line pt-3">
-                    <Button size="sm" variant="primary" icon={SquareTerminal} className="flex-1" onClick={() => openTerminal(s.id)}>
-                      终端
-                    </Button>
-                    <Button size="sm" icon={Activity} className="flex-1" onClick={() => setDetail(s)}>
-                      详情
-                    </Button>
-                    <IconButton icon={Plug} tip="测试连接" loading={testing[s.id]} onClick={() => test(s)} />
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+                );
+              })}
+              <SortOverlay sortable={sortable}>
+                {(id) => {
+                  const s = byId.get(id);
+                  return s ? card(s, "ghost") : null;
+                }}
+              </SortOverlay>
+            </div>
+            {list.length > 1 && <div className="mt-4 text-center text-[12px] text-muted/80">按住卡片拖动可以调整先后顺序 · 点名称或地址可以复制</div>}
+          </>
         ) : (
           <Card className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-[13px]">
@@ -293,11 +334,13 @@ export default function Servers() {
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2.5">
                           <ServerAvatar name={s.name} size={28} />
-                          <span className="font-medium">{s.name}</span>
+                          <CopyText value={s.name} what="名称" className="font-medium">
+                            {s.name}
+                          </CopyText>
                         </div>
                       </td>
                       <td className="px-4 py-2.5 font-mono text-[12px] text-fg2">
-                        {s.username}@{s.host}:{s.port}
+                        <ServerAddr server={s} copy />
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="flex flex-wrap gap-1">
@@ -369,11 +412,9 @@ interface FormState {
 }
 
 function ServerForm({ open, server, onClose }: { open: boolean; server: Server | null; onClose: () => void }) {
-  const { keys, servers, loadServers, loadKeys, go } = useApp();
+  const { keys, servers, loadServers, loadKeys, go, privacy } = useApp();
   const empty: FormState = { name: "", host: "", port: 22, username: "root", authType: keys.length ? "key" : "password", keyId: keys[0]?.id ?? "", password: "", group: "", tags: [], jumpServerId: "", routeMode: "direct", proxy: emptyProxy, useSudo: false, sudoPassword: "", notes: "" };
   const [f, setF] = useState<FormState>(empty);
-  // 已保存的密码直接显示出来，方便查看和复制；需要时可以点眼睛遮住
-  const [showPw, setShowPw] = useState(true);
   // 已保存的密码读出来了没有：读到了，输入框里就是完整的密码，清空表示删除
   const [secretsLoaded, setSecretsLoaded] = useState(false);
   // 上一次测试连接成功时的地址和识别出的系统，保存时一并记下
@@ -389,7 +430,6 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
     if (!open) return;
     void loadKeys();
     setResult(null);
-    setShowPw(true);
     setSecretsLoaded(false);
     setTested(null);
     formFor.current = server?.id ?? "";
@@ -560,21 +600,13 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
             </Select>
           </Field>
         ) : (
-          <Field label="登录密码" hint={server?.hasPassword && !secretsLoaded ? "已保存密码，留空表示不修改" : "密码直接显示，方便查看和复制；保存到磁盘时是加密的"}>
-            <Input
-              mono={showPw}
-              type={showPw ? "text" : "password"}
+          <Field label="登录密码" hint={server?.hasPassword && !secretsLoaded ? "已保存密码，留空表示不修改" : "默认遮住，点右边的眼睛查看；不用显示也可以直接复制。保存到磁盘时是加密的"}>
+            <PasswordInput
               value={f.password}
               onChange={(e) => set("password", e.target.value)}
               placeholder={server?.hasPassword && !secretsLoaded ? "••••••••（不修改）" : "输入密码"}
-              autoComplete="off"
-              className="pr-[68px]"
-              right={
-                <div className="flex items-center">
-                  <IconButton size="sm" icon={showPw ? EyeOff : Eye} tip={showPw ? "遮住" : "显示"} onClick={() => setShowPw((v) => !v)} />
-                  {f.password && <CopyButton text={f.password} tip="复制密码" />}
-                </div>
-              }
+              copyTip="复制密码"
+              data-field="password"
             />
           </Field>
         )}
@@ -617,7 +649,8 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
                     .filter((s) => s.id !== server?.id)
                     .map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name}（{s.host}）
+                        {s.name}
+                        {privacy ? "" : `（${s.host}）`}
                       </option>
                     ))}
                 </Select>
@@ -633,14 +666,11 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
             </div>
             {f.useSudo && (
               <Field label="sudo 密码" hint={server?.hasSudoPassword && !secretsLoaded ? "已保存，留空表示不修改" : "留空时使用登录密码，或要求 sudoers 配置 NOPASSWD"}>
-                <Input
-                  mono={showPw}
-                  type={showPw ? "text" : "password"}
+                <PasswordInput
                   value={f.sudoPassword}
                   onChange={(e) => set("sudoPassword", e.target.value)}
                   placeholder={server?.hasSudoPassword && !secretsLoaded ? "••••••••（不修改）" : "可选"}
-                  autoComplete="off"
-                  right={f.sudoPassword ? <CopyButton text={f.sudoPassword} tip="复制 sudo 密码" /> : undefined}
+                  copyTip="复制 sudo 密码"
                 />
               </Field>
             )}
@@ -668,6 +698,20 @@ function ServerForm({ open, server, onClose }: { open: boolean; server: Server |
 }
 
 // ---- 详情抽屉 ----
+
+/** 不该一直亮在屏幕上的一行内容（密码，隐私模式下的地址）：默认遮住，点眼睛才显示；不用显示也能复制 */
+function Secret({ value, hide = true, tip = "复制" }: { value: string; hide?: boolean; tip?: string }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => setShown(false), [value, hide]);
+  const visible = shown || !hide;
+  return (
+    <span className="inline-flex max-w-full items-center gap-1">
+      <span className={cn("min-w-0 font-mono text-[12px] break-all", visible && "selectable")}>{visible ? value : "••••••••"}</span>
+      {hide && <IconButton size="sm" icon={shown ? EyeOff : Eye} tip={shown ? "遮住" : "显示"} onClick={() => setShown((v) => !v)} />}
+      <CopyButton text={value} tip={tip} />
+    </span>
+  );
+}
 
 function Gauge({ label, value, sub, icon: Icon }: { label: string; value: number; sub: string; icon: typeof Cpu }) {
   const tone = usageTone(value);
@@ -698,6 +742,10 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
   const [keysErr, setKeysErr] = useState("");
   const [deploy, setDeploy] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
+  const privacy = useApp((s) => s.privacy);
+  const addr = useAddr();
+  const mask = useMask();
+  const scrub = useScrub();
 
   // 实时监控：详情打开且停留在「系统概况」时采样
   const openIds = useOpenServerIds();
@@ -761,7 +809,7 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
     if (server && tab === "keys" && authKeys === null) void loadKeys(server);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, server?.id]);
-  // 「连接信息」里直接显示保存的密码，方便复制
+  // 「连接信息」里可以查看和复制保存的密码（默认遮住）
   useEffect(() => {
     if (!server || tab !== "host") return;
     api
@@ -782,12 +830,6 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
   const st = status[server.id];
   const tempRoute = routes[server.id];
   const savedRoute = server.jumpServerId ? `经跳板机 ${servers.find((x) => x.id === server.jumpServerId)?.name ?? "（已删除）"}` : server.proxy ? `经${proxyText(server.proxy)}` : "直连";
-  const secretRow = (value: string, tip: string) => (
-    <span className="inline-flex max-w-full items-center gap-1">
-      <span className="selectable min-w-0 font-mono text-[12px] break-all">{value}</span>
-      <CopyButton text={value} tip={tip} />
-    </span>
-  );
   const rootDisk = info?.disks.reduce((a, d) => (d.usePct > (a?.usePct ?? -1) ? d : a), undefined as ServerInfo["disks"][number] | undefined);
 
   return (
@@ -802,7 +844,7 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
           <StatusDot status={st?.status} />
         </span>
       }
-      subtitle={`${server.username}@${server.host}:${server.port}${server.os ? " · " + server.os : ""}`}
+      subtitle={`${addr(server)}${server.os ? " · " + server.os : ""}`}
       actions={
         <div className="flex gap-1.5">
           <Button size="sm" variant="primary" icon={SquareTerminal} onClick={() => openTerminal(server.id)}>
@@ -832,7 +874,7 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
             </div>
           ) : infoErr ? (
             <Callout tone="bad" title="无法采集系统信息" action={<Button size="sm" onClick={() => loadInfo(server)}>重试</Button>}>
-              {infoErr}
+              {scrub(infoErr)}
             </Callout>
           ) : info ? (
             <div className="space-y-4">
@@ -878,7 +920,7 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
                         ) : undefined
                       }
                     >
-                      {liveErr.error}
+                      {scrub(liveErr.error)}
                     </Callout>
                   ) : (
                     <>
@@ -922,12 +964,12 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
                 </Callout>
               )}
               <Card className="p-4">
-                <KV k="主机名" v={info.hostname} />
+                <KV k="主机名" v={mask(info.hostname)} />
                 <KV k="系统" v={info.os} />
                 <KV k="内核" v={`${info.kernel} (${info.arch})`} mono />
                 <KV k="CPU" v={info.cpuModel || "-"} />
                 <KV k="运行时长" v={formatDuration(info.uptime)} />
-                <KV k="IP 地址" v={info.ips.join("  ") || "-"} mono />
+                <KV k="IP 地址" v={mask(info.ips.join("  ")) || "-"} mono />
                 <KV k="进程 / 登录用户" v={`${info.procs} / ${info.users}`} />
                 {info.swapTotal > 0 && <KV k="Swap" v={`${formatBytes(info.swapTotal - info.swapFree)} / ${formatBytes(info.swapTotal)}`} />}
               </Card>
@@ -1077,12 +1119,13 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
               </Callout>
             )}
             <Card className="p-4">
-              <KV k="地址" v={`${server.host}:${server.port}`} mono />
-              <KV k="用户" v={server.username} mono />
+              <KV k="地址" v={<Secret value={server.host} hide={privacy} tip="复制 IP / 域名" />} />
+              <KV k="端口" v={server.port} mono />
+              <KV k="用户" v={<Secret value={server.username} hide={privacy} tip="复制用户名" />} />
               <KV k="认证" v={server.authType === "key" ? "私钥" : "密码"} />
-              {secrets?.password && <KV k="登录密码" v={secretRow(secrets.password, "复制密码")} />}
+              {secrets?.password && <KV k="登录密码" v={<Secret value={secrets.password} tip="复制密码" />} />}
               <KV k="sudo" v={server.useSudo ? "启用" : "未启用"} />
-              {server.useSudo && secrets?.sudoPassword && <KV k="sudo 密码" v={secretRow(secrets.sudoPassword, "复制 sudo 密码")} />}
+              {server.useSudo && secrets?.sudoPassword && <KV k="sudo 密码" v={<Secret value={secrets.sudoPassword} tip="复制 sudo 密码" />} />}
               <KV
                 k="线路"
                 v={
@@ -1095,7 +1138,7 @@ function ServerDetail({ server, onClose, onEdit }: { server: Server | null; onCl
                 }
               />
               <KV k="最近检测" v={st?.checkedAt ? `${timeAgo(st.checkedAt)}${st.status === "online" ? ` · ${st.latency} ms` : ""}` : "-"} />
-              {st?.error && <KV k="错误" v={st.error} />}
+              {st?.error && <KV k="错误" v={scrub(st.error)} />}
             </Card>
             <Card className="p-4">
               <div className="mb-2 flex items-center gap-2 text-[13px] font-medium">

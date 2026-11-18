@@ -29,7 +29,7 @@ import { liveState, useMonitorError, useMonitorWatch, useNow, useSeries } from "
 import { useOpenServerIds } from "../lib/term";
 import { useApp } from "../lib/store";
 import { Badge, Button, Callout, Card, Empty, Meter, SectionTitle, Spinner, StatusDot } from "../components/ui";
-import { ServerAvatar } from "../components/widgets";
+import { ServerAddr, ServerAvatar } from "../components/widgets";
 
 function greeting() {
   const h = new Date().getHours();
@@ -98,7 +98,7 @@ function ServerRow({ server, st, watched, interval, now, onOpen }: { server: Ser
           <span className="truncate text-[13px] font-medium">{server.name}</span>
           <StatusDot status={st?.status} />
         </div>
-        <div className="truncate font-mono text-[11.5px] text-muted">{server.host}</div>
+        <ServerAddr server={server} user={false} port={false} className="block truncate font-mono text-[11.5px] text-muted" />
       </div>
       {live && last ? (
         <div className="flex shrink-0 gap-3" style={{ fontVariantNumeric: "tabular-nums" }}>

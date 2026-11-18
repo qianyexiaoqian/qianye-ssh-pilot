@@ -210,6 +210,28 @@ html[style*="-resize"] * {
   cursor: inherit !important;
 }
 
+/* 拖动排序（服务器卡片、终端标签）：拖动过程中指针保持「抓住」的样子，其余元素不再响应悬停 */
+body.sorting,
+body.sorting * {
+  cursor: grabbing !important;
+}
+body.sorting [data-tip]:hover::after {
+  display: none;
+}
+/* 被提起来的那一份：稍微放大，带投影 */
+.sort-ghost > * {
+  animation: sort-lift 0.14s ease-out both;
+  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.45);
+}
+.sort-ghost.sort-flat > * {
+  animation: none;
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.45);
+}
+@keyframes sort-lift {
+  from { transform: scale(1); }
+  to { transform: scale(1.025); }
+}
+
 .drag {
   --wails-draggable: drag;
 }

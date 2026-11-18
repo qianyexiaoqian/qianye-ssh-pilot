@@ -510,3 +510,52 @@ func TestImageBudget(t *testing.T) {
 		t.Error("no image data expected when images are off")
 	}
 }
+
+// 私钥文件的内容不发给模型：既不附在消息里，说明里也只告诉模型该用哪个工具处理它。
+func TestPrivateKeyAttachmentsStayLocal(t *testing.T) {
+	src := t.TempDir()
+	s := NewAttachStore(t.TempDir(), false)
+	add := func(name, text string) Attachment {
+		p := filepath.Join(src, name)
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		att, err := s.AddPath(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return att
+	}
+	secret := "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgSECRETSECRETSECRET"
+	cert := add("fullchain.pem", "-----BEGIN CERTIFICATE-----\nMIIBcertificatebody\n-----END CERTIFICATE-----\n")
+	key := add("privkey.pem", "-----BEGIN PRIVATE KEY-----\n"+secret+"\n-----END PRIVATE KEY-----\n")
+	both := add("site.pem", "-----BEGIN CERTIFICATE-----\nMIIBother\n-----END CERTIFICATE-----\n-----BEGIN EC PRIVATE KEY-----\n"+secret+"\n-----END EC PRIVATE KEY-----\n")
+	ssh := add("id_ed25519", "-----BEGIN OPENSSH PRIVATE KEY-----\n"+secret+"\n-----END OPENSSH PRIVATE KEY-----\n")
+	note := s.attachNote("", []Attachment{cert, key, both, ssh})
+	if strings.Contains(note, secret) {
+		t.Fatalf("private key content leaked into the message: %s", note)
+	}
+	if !strings.Contains(note, "MIIBcertificatebody") {
+		t.Error("the certificate itself is public and should still be inlined")
+	}
+	for _, att := range []Attachment{key, both, ssh} {
+		if !strings.Contains(note, att.ID+"「"+att.Name+"」：私钥文件") {
+			t.Errorf("%s should be listed as a private key file: %s", att.Name, note)
+		}
+	}
+	if !strings.Contains(note, "import_certificate") || !strings.Contains(note, "upload_attachment") {
+		t.Errorf("the note should say how to use a private key file: %s", note)
+	}
+	for text, want := range map[string]bool{
+		"-----BEGIN RSA PRIVATE KEY-----":       true,
+		"-----BEGIN ENCRYPTED PRIVATE KEY-----": true,
+		"PuTTY-User-Key-File-3: ssh-ed25519":    true,
+		"-----BEGIN PUBLIC KEY-----":            false,
+		"-----BEGIN CERTIFICATE-----":           false,
+		"ssl_certificate_key /etc/ssl/a.key;":   false,
+	} {
+		if IsPrivateKeyText(text) != want {
+			t.Errorf("IsPrivateKeyText(%q) should be %v", text, want)
+		}
+	}
+}

@@ -128,6 +128,8 @@ function MainApp() {
       on<Record<string, ServerStatus>>("servers:status", (s) => setStatus(s ?? {})),
       // 连上服务器后识别出了系统名称等
       on("servers:changed", () => void loadServers()),
+      // AI 助手保存了快捷命令
+      on("quick:changed", () => void useQuick.getState().load()),
       // 临时线路变化；带着服务器 ID 表示它的连接都断开了，临时线路自动取消
       on<string>("routes:changed", (cleared) => {
         void loadRoutes();

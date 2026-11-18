@@ -16,7 +16,7 @@ import (
 
 // Discovered 是在服务器上发现的证书配置。
 type Discovered struct {
-	Source      string   `json:"source"` // nginx | apache | haproxy | xboard | letsencrypt
+	Source      string   `json:"source"` // nginx | apache | haproxy | xboard | 1panel | letsencrypt
 	CertPath    string   `json:"certPath"`
 	KeyPath     string   `json:"keyPath"`
 	Domains     []string `json:"domains"`
@@ -49,11 +49,25 @@ var XboardConfigs = []string{"/etc/xboard-node/config.yml"}
 // xboardAwk 从 xboard-node 的 config.yml 里取出 cert_file / key_file 指向的路径（不管它们嵌套在哪一层）。
 const xboardAwk = `/^[[:space:]-]*(cert_file|key_file)[[:space:]]*:/ { k = $1; gsub(/[[:space:]-]/, "", k); v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v); gsub(/["\047]/, "", v); gsub(/[[:space:]]+$/, "", v); if (v != "") print "xboard", (k == "key_file" ? "key" : "cert"), v }`
 
+// OnePanelSiteDirs 是 1Panel 面板存放网站证书的目录（shell 通配符）：每个网站一个目录，里面是 fullchain.pem 和 privkey.pem。
+// 1Panel 的 OpenResty 跑在容器里，宿主机上没有 nginx 命令，nginx -T 找不到这些证书，要直接看目录。
+// 前一个是 v1 的位置，后一个是 v2 把网站目录挪出来之后的位置。
+var OnePanelSiteDirs = []string{"/opt/1panel/apps/openresty/*/www/sites/*/ssl", "/opt/1panel/www/sites/*/ssl"}
+
+// onePanelLoop 的 %s 是上面的目录：通配符要留给 shell 展开，不能加引号（这些路径是程序里写死的，没有空格）。
+const onePanelLoop = `for d in %s; do
+  [ -f "$d/fullchain.pem" ] && [ -f "$d/privkey.pem" ] && echo "1panel cert $d/fullchain.pem" && echo "1panel key $d/privkey.pem"
+done
+`
+
 func buildDiscoverScript() string {
 	var b strings.Builder
 	b.WriteString(discoverScript)
 	for _, cfg := range XboardConfigs {
 		fmt.Fprintf(&b, "[ -f %[1]s ] && awk -F: '%[2]s' %[1]s\n", sshx.ShellQuote(cfg), xboardAwk)
+	}
+	if len(OnePanelSiteDirs) > 0 {
+		fmt.Fprintf(&b, onePanelLoop, strings.Join(OnePanelSiteDirs, " "))
 	}
 	b.WriteString(discoverLetsEncrypt)
 	return b.String()
@@ -79,7 +93,7 @@ func cleanPath(source, p string) string {
 	return p
 }
 
-// Discover 从 Nginx / Apache / HAProxy / XBoard 节点的配置和 Let's Encrypt 目录中查找证书，并读取每个证书的信息。
+// Discover 从 Nginx / Apache / HAProxy / XBoard 节点的配置、1Panel 的网站证书目录和 Let's Encrypt 目录中查找证书，并读取每个证书的信息。
 func Discover(ctx context.Context, pool *sshx.Pool, serverID string) ([]Discovered, error) {
 	res, err := pool.RunScript(ctx, serverID, sshx.Script{Content: buildDiscoverScript(), Interpreter: "sh"}, sshx.ExecOptions{Privileged: true, Timeout: time.Minute})
 	if err != nil {

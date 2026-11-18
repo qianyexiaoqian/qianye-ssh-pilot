@@ -27,7 +27,7 @@ import { api, on, type CertParsed, type CertView, type DeployResult, type Deploy
 import { certTone, cn, formatDate, timeAgo } from "../lib/format";
 import { confirm, toast, useApp } from "../lib/store";
 import { Badge, Button, Callout, Card, CopyButton, Empty, Field, IconButton, Input, Menu, Meter, Modal, Segmented, Select, Spinner, Switch, TagInput, Textarea } from "../components/ui";
-import { KV, ServerPicker } from "../components/widgets";
+import { KV, ServerPicker, useMask } from "../components/widgets";
 
 function DaysBadge({ days }: { days: number }) {
   const tone = certTone(days);
@@ -56,6 +56,8 @@ export default function Certs() {
   };
   useEffect(() => {
     void load();
+    // AI 助手导入、更新或改名了证书：这一页开着的话跟着刷新
+    return on("certs:changed", () => void load());
   }, []);
   useEffect(() => {
     if (params.certId) setSel(params.certId);
@@ -90,7 +92,8 @@ export default function Certs() {
                   <span className={cn("shrink-0 text-[11.5px]", `text-${tone}`)}>{c.days < 0 ? "已过期" : `${c.days} 天`}</span>
                 </div>
                 <div className="mt-0.5 truncate text-[11.5px] text-muted">
-                  {c.domains.length > 1 ? `${c.domains[0]} 等 ${c.domains.length} 个域名` : c.issuer}
+                  {/* 改过名称的证书，这一行显示它的域名，免得认不出是哪张 */}
+                  {c.domains.length > 1 ? `${c.domains[0]} 等 ${c.domains.length} 个域名` : c.domains[0] && c.name !== c.domains[0] ? c.domains[0] : c.issuer}
                 </div>
                 <Meter className="mt-2" height={4} value={(Math.max(c.days, 0) / total) * 100} tone={tone} />
                 <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted">
@@ -145,7 +148,22 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
   const [discover, setDiscover] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [notes, setNotes] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ name: string; notes: string } | null>(null);
+  const [savingMeta, setSavingMeta] = useState(false);
+  const mask = useMask();
+  const saveMeta = async () => {
+    if (!editing) return;
+    setSavingMeta(true);
+    try {
+      await api.UpdateCertMeta(cert.id, editing.name, editing.notes);
+      setEditing(null);
+      await reload();
+    } catch (e) {
+      toast.error("保存失败", e);
+    } finally {
+      setSavingMeta(false);
+    }
+  };
 
   useEffect(() => {
     const h = (e: Event) => {
@@ -215,8 +233,11 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
           <ShieldCheck size={22} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-[19px] font-semibold">{cert.name}</h2>
+          <div className="group/name flex items-center gap-2">
+            <h2 className="truncate text-[19px] font-semibold" title="双击修改名称" onDoubleClick={() => setEditing({ name: cert.name, notes: cert.notes })}>
+              {cert.name}
+            </h2>
+            <IconButton icon={Pencil} size="sm" tip="修改名称" className="opacity-60 group-hover/name:opacity-100" onClick={() => setEditing({ name: cert.name, notes: cert.notes })} data-cert-rename />
             <DaysBadge days={cert.days} />
           </div>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -242,7 +263,7 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
           <Menu
             trigger={<IconButton icon={Ellipsis} />}
             items={[
-              { label: "编辑备注", icon: Pencil, onClick: () => setNotes(cert.notes) },
+              { label: "修改名称和备注", icon: Pencil, onClick: () => setEditing({ name: cert.name, notes: cert.notes }) },
               {
                 label: "导出证书文件",
                 icon: Download,
@@ -371,7 +392,7 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[13.5px] font-semibold">{t.serverName || "（服务器已删除）"}</span>
-                      <span className="font-mono text-[11.5px] text-muted">{t.serverHost}</span>
+                      <span className="font-mono text-[11.5px] text-muted">{mask(t.serverHost)}</span>
                       <Badge tone="accent">{presetLabel[t.preset as Preset] ?? "自定义"}</Badge>
                       <Badge tone={meta.tone} icon={meta.Icon}>
                         {meta.label}
@@ -458,24 +479,41 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
       <DeployModal open={!!deploy} cert={cert} targetIds={deploy?.targetIds ?? []} onClose={() => setDeploy(null)} onDone={reload} />
       <DiscoverModal open={discover} cert={cert} onClose={() => setDiscover(false)} onChanged={reload} />
       <Modal
-        open={notes !== null}
-        onClose={() => setNotes(null)}
-        title="编辑备注"
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title="修改名称和备注"
+        description="名称只是这张证书在证书中心里显示的标题，不影响证书本身和部署。"
         icon={Pencil}
+        size="sm"
         footer={
-          <Button
-            variant="primary"
-            onClick={async () => {
-              await api.UpdateCertMeta(cert.id, cert.name, notes ?? "");
-              setNotes(null);
-              await reload();
-            }}
-          >
-            保存
-          </Button>
+          <>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              取消
+            </Button>
+            <Button variant="primary" loading={savingMeta} disabled={!editing?.name.trim()} onClick={saveMeta}>
+              保存
+            </Button>
+          </>
         }
       >
-        <Textarea value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} placeholder="例如：续期方式、负责人、用途" />
+        <div className="space-y-3">
+          <Field label="名称" hint={cert.domains.length ? `域名：${cert.domains.slice(0, 3).join("、")}${cert.domains.length > 3 ? " 等" : ""}` : undefined}>
+            <Input
+              autoFocus
+              value={editing?.name ?? ""}
+              onChange={(e) => setEditing((m) => m && { ...m, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && editing?.name.trim()) void saveMeta();
+              }}
+              placeholder="例如：主站证书"
+              maxLength={80}
+              data-cert-name
+            />
+          </Field>
+          <Field label="备注">
+            <Textarea value={editing?.notes ?? ""} onChange={(e) => setEditing((m) => m && { ...m, notes: e.target.value })} placeholder="例如：续期方式、负责人、用途" />
+          </Field>
+        </div>
       </Modal>
     </div>
   );
@@ -683,6 +721,9 @@ function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; r
 // ---- 部署目标 ----
 
 type Preset = "nginx" | "apache" | "haproxy" | "xboard" | "custom";
+
+/** 「扫描服务器」找到的证书是从哪里发现的 */
+const sourceLabel: Record<string, string> = { nginx: "Nginx", apache: "Apache", haproxy: "HAProxy", xboard: "XBoard 节点", "1panel": "1Panel", letsencrypt: "Let's Encrypt" };
 
 const presetLabel: Record<Preset, string> = { nginx: "Nginx", apache: "Apache", haproxy: "HAProxy", xboard: "XBoard 节点", custom: "自定义" };
 const presetNote: Record<Preset, string> = { nginx: "reload nginx", apache: "reload apache2", haproxy: "合并 PEM", xboard: "restart xboard-node", custom: "手动配置" };
@@ -1022,7 +1063,7 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
     }
   };
   return (
-    <Modal open={open} onClose={onClose} title="扫描服务器上的证书" icon={Radar} size="xl" description="读取 nginx -T、Apache、HAProxy、XBoard 节点（xboard-node）的配置与 /etc/letsencrypt/live，找出正在使用的证书文件">
+    <Modal open={open} onClose={onClose} title="扫描服务器上的证书" icon={Radar} size="xl" description="读取 nginx -T、Apache、HAProxy、XBoard 节点（xboard-node）的配置、1Panel 的网站证书目录与 /etc/letsencrypt/live，找出正在使用的证书文件">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[280px_1fr]">
         <div className="space-y-3">
           <ServerPicker single value={server} onChange={setServer} maxHeight={300} />
@@ -1034,13 +1075,13 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
           {found === null ? (
             <div className="flex h-full items-center justify-center text-[12.5px] text-muted">{busy ? <Spinner /> : "选择服务器后开始扫描"}</div>
           ) : found.length === 0 ? (
-            <Empty icon={Search} title="没有发现证书配置" description="该服务器上没有找到 Nginx / Apache / HAProxy / XBoard 节点的证书配置。可以手动添加部署目标。" />
+            <Empty icon={Search} title="没有发现证书配置" description="该服务器上没有找到 Nginx / Apache / HAProxy / XBoard 节点 / 1Panel 的证书配置。可以手动添加部署目标。" />
           ) : (
             <div className="space-y-2">
               {found.map((d) => (
                 <div key={d.certPath} className="rounded-xl border border-line2 bg-bg2/50 p-3">
                   <div className="flex items-center gap-2">
-                    <Badge tone="accent">{presetLabel[d.source as Preset] ?? d.source}</Badge>
+                    <Badge tone="accent">{sourceLabel[d.source] ?? d.source}</Badge>
                     <span className="truncate font-mono text-[12px] text-fg">{d.certPath}</span>
                   </div>
                   {d.keyPath && d.keyPath !== d.certPath && <div className="mt-1 truncate font-mono text-[11.5px] text-muted">私钥 {d.keyPath}</div>}

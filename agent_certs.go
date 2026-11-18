@@ -39,7 +39,7 @@ func (a *App) findCert(ref string) (*CertView, error) {
 		names = append(names, c.Name)
 	}
 	if len(names) == 0 {
-		return nil, errors.New("证书库是空的：请用户先在「证书」页导入证书，或从服务器上拉取")
+		return nil, errors.New("证书库是空的：先用 import_certificate 把证书收进来（服务器上的证书用 find_certificates 查找路径，或让用户把证书和私钥文件发过来）")
 	}
 	return nil, fmt.Errorf("没有找到证书 %s。证书库里的证书：%s", ref, strings.Join(names, "、"))
 }

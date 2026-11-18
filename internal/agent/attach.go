@@ -379,6 +379,15 @@ func ReadText(path string) (text string, truncated bool, err error) {
 	return decodeText(b), truncated, nil
 }
 
+var privateKeyRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|PuTTY-User-Key-File-`)
+
+// IsPrivateKeyText 判断一段文本里是不是带着私钥（PEM、OpenSSH、PuTTY 格式）。
+// 私钥文件的内容不发给模型：导入证书库、上传到服务器都由程序直接读取文件。
+func IsPrivateKeyText(text string) bool { return privateKeyRe.MatchString(text) }
+
+// PrivateKeyHint 告诉模型私钥附件不能阅读，以及该怎样使用它。
+const PrivateKeyHint = "里面有私钥，为了安全，内容不提供给你：要导入证书库用 import_certificate，要放到服务器上用 upload_attachment"
+
 // ---- 附件在对话里的呈现 ----
 
 func humanBytes(n int64) string {
@@ -408,11 +417,13 @@ func (s *AttachStore) attachNote(sessionID string, atts []Attachment) string {
 			fmt.Fprintf(&list, "- %s「%s」：图片，%d×%d\n", att.ID, att.Name, att.Width, att.Height)
 		case att.Text:
 			hasFile = true
-			note := "内容用 read_attachment 阅读"
+			kind, note := "文本文件", "内容用 read_attachment 阅读"
 			if att.Size <= inlineTextRunes*4 {
 				if p, err := s.Local(sessionID, att); err == nil {
 					if text, _, err := ReadText(p); err == nil {
-						if n := utf8.RuneCountInString(text); n <= inlineTextRunes && total+n <= inlineTextTotal {
+						if IsPrivateKeyText(text) {
+							kind, note = "私钥文件", PrivateKeyHint
+						} else if n := utf8.RuneCountInString(text); n <= inlineTextRunes && total+n <= inlineTextTotal {
 							total += n
 							note = "内容附在下面"
 							fmt.Fprintf(&inline, "\n<attachment id=%q name=%q>\n%s\n</attachment>\n", att.ID, att.Name, strings.TrimRight(text, "\n"))
@@ -420,7 +431,7 @@ func (s *AttachStore) attachNote(sessionID string, atts []Attachment) string {
 					}
 				}
 			}
-			fmt.Fprintf(&list, "- %s「%s」：文本文件，%s，%s\n", att.ID, att.Name, humanBytes(att.Size), note)
+			fmt.Fprintf(&list, "- %s「%s」：%s，%s，%s\n", att.ID, att.Name, kind, humanBytes(att.Size), note)
 		default:
 			hasFile = true
 			fmt.Fprintf(&list, "- %s「%s」：二进制文件，%s，不能直接阅读\n", att.ID, att.Name, humanBytes(att.Size))

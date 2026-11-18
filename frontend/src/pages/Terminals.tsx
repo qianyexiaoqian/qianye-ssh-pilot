@@ -3,10 +3,11 @@ import { Bot, FolderOpen, LoaderCircle, Minus, Plus, RefreshCw, Route, Search, S
 import { api } from "../lib/api";
 import { cn } from "../lib/format";
 import { useOpsAgent } from "../lib/agent";
-import { toast, useApp } from "../lib/store";
+import { SortOverlay, useSortable } from "../lib/sortable";
+import { toast, useApp, type TermTab } from "../lib/store";
 import { openFilesWindow, useTermUI } from "../lib/term";
 import { Button, Empty, IconButton, Kbd, StatusDot } from "../components/ui";
-import { ServerAvatar } from "../components/widgets";
+import { ServerAddr, ServerAvatar } from "../components/widgets";
 import { XTermView } from "../components/XTermView";
 import { QuickPanel } from "../components/QuickCommands";
 import { OPS_MIN_W, OpsPanel } from "../components/OpsPanel";
@@ -50,7 +51,7 @@ function QuickConnect({ onPick }: { onPick: (id: string) => void }) {
           <button key={s.id} type="button" onClick={() => onPick(s.id)} className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left hover:bg-panel3">
             <StatusDot status={status[s.id]?.status} />
             <span className="truncate text-[13px]">{s.name}</span>
-            <span className="ml-auto truncate font-mono text-[11.5px] text-muted">{s.host}</span>
+            <ServerAddr server={s} user={false} port={false} className="ml-auto truncate font-mono text-[11.5px] text-muted" />
           </button>
         ))}
       </div>
@@ -76,6 +77,12 @@ export default function Terminals() {
     return JSON.stringify(out);
   });
   const ai = JSON.parse(aiState) as Record<string, "running" | "waiting">;
+  // 按住标签拖动，调整标签的先后顺序
+  const sortTabs = useSortable({
+    ids: terms.map((t) => t.key),
+    axis: "x",
+    onReorder: (keys) => useApp.setState({ terms: keys.map((k) => terms.find((t) => t.key === k)).filter((t): t is TermTab => !!t) }),
+  });
 
   const changeFont = async (delta: number) => {
     if (!settings) return;
@@ -115,9 +122,7 @@ export default function Terminals() {
                     <span className="truncate text-[13.5px] font-medium">{s.name}</span>
                     <StatusDot status={status[s.id]?.status} />
                   </div>
-                  <div className="truncate font-mono text-[11.5px] text-muted">
-                    {s.username}@{s.host}:{s.port}
-                  </div>
+                  <ServerAddr server={s} className="block truncate font-mono text-[11.5px] text-muted" />
                 </div>
                 <SquareTerminal size={16} className="shrink-0 text-muted" />
               </button>
@@ -128,55 +133,76 @@ export default function Terminals() {
     );
   }
 
+  // 一个终端标签。slot：正在被拖动，原地只留一个空位；ghost：跟着指针走的那一份
+  const tabView = (t: TermTab, mode: "normal" | "slot" | "ghost") => {
+    const isActive = t.key === active?.key;
+    const aiMark = ai[t.serverId];
+    return (
+      <div
+        key={t.key}
+        {...(mode === "ghost" ? {} : sortTabs.itemProps(t.key))}
+        onClick={() => setActiveTerm(t.key)}
+        onMouseDown={(e) => {
+          // 和浏览器的标签一样，按下就切换过去（拖动之后松手不再算一次点击）；
+          // 同时不让这次按下把输入焦点从终端里带走，拖完标签可以接着打字
+          if (e.button === 0 && !(e.target as HTMLElement).closest("button")) {
+            e.preventDefault();
+            setActiveTerm(t.key);
+          }
+          if (e.button === 1) {
+            e.preventDefault();
+            closeTab(t.key);
+          }
+        }}
+        className={cn(
+          "group flex h-[30px] max-w-[220px] shrink-0 items-center gap-2 rounded-lg border pr-1 pl-2.5 text-[12.5px] transition-colors",
+          isActive || mode === "ghost" ? "border-line2 bg-panel text-fg shadow-sm" : "border-transparent text-muted hover:bg-panel2 hover:text-fg2",
+          mode === "slot" && "border-dashed border-accent/50 bg-transparent shadow-none [&>*]:invisible",
+          mode === "ghost" && "h-full w-full max-w-none",
+        )}
+      >
+        {t.state === "connecting" ? (
+          <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
+        ) : (
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", t.state === "open" ? "bg-ok" : "bg-muted/60")} />
+        )}
+        <span className="truncate">{t.title}</span>
+        {aiMark && (
+          <span title={aiMark === "waiting" ? "AI 在等你批准一个操作" : "AI 正在这台服务器上处理"} className={cn("flex shrink-0 items-center", aiMark === "waiting" ? "text-warn" : "animate-pulse text-accent")}>
+            <Bot size={12} />
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            closeTab(t.key);
+          }}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted opacity-60 hover:bg-panel3 hover:text-fg group-hover:opacity-100"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
+  };
+
   // 工具栏按钮：窗口较窄时只显示图标
   const label = (text: string) => <span className="hidden @[720px]/term:inline">{text}</span>;
 
   return (
     <div className="@container/term flex h-full flex-col">
       <div className="flex h-[42px] shrink-0 items-center gap-1 border-b border-line bg-bg2 px-2">
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          {terms.map((t) => {
-            const isActive = t.key === active?.key;
-            const aiMark = ai[t.serverId];
-            return (
-              <div
-                key={t.key}
-                onClick={() => setActiveTerm(t.key)}
-                onMouseDown={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    closeTab(t.key);
-                  }
-                }}
-                className={cn(
-                  "group flex h-[30px] max-w-[220px] shrink-0 items-center gap-2 rounded-lg border pr-1 pl-2.5 text-[12.5px] transition-colors",
-                  isActive ? "border-line2 bg-panel text-fg shadow-sm" : "border-transparent text-muted hover:bg-panel2 hover:text-fg2",
-                )}
-              >
-                {t.state === "connecting" ? (
-                  <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
-                ) : (
-                  <span className={cn("h-2 w-2 shrink-0 rounded-full", t.state === "open" ? "bg-ok" : "bg-muted/60")} />
-                )}
-                <span className="truncate">{t.title}</span>
-                {aiMark && (
-                  <span title={aiMark === "waiting" ? "AI 在等你批准一个操作" : "AI 正在这台服务器上处理"} className={cn("flex shrink-0 items-center", aiMark === "waiting" ? "text-warn" : "animate-pulse text-accent")}>
-                    <Bot size={12} />
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(t.key);
-                  }}
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted opacity-60 hover:bg-panel3 hover:text-fg group-hover:opacity-100"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
+        <div className="relative flex min-w-0 items-center gap-1 overflow-x-auto" data-term-tabs>
+          {sortTabs.order.map((key) => {
+            const t = terms.find((x) => x.key === key);
+            return t ? tabView(t, sortTabs.draggingId === key ? "slot" : "normal") : null;
           })}
+          <SortOverlay sortable={sortTabs} className="sort-flat">
+            {(key) => {
+              const t = terms.find((x) => x.key === key);
+              return t ? tabView(t, "ghost") : null;
+            }}
+          </SortOverlay>
         </div>
         {/* 新建按钮放在滚动容器之外：容器的 overflow 会把下拉列表裁掉 */}
         <div className="flex min-w-[28px] flex-1 items-center">
@@ -227,11 +253,13 @@ export default function Terminals() {
       </div>
       <div ref={rowRef} className="relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1">
-          {terms.map((t) => (
-            <div key={t.key} className={cn("absolute inset-0", t.key === active?.key ? "visible" : "invisible")}>
-              <XTermView tab={t} active={t.key === active?.key} />
-            </div>
-          ))}
+          {[...terms]
+            .sort((a, b) => Number(a.key.slice(4)) - Number(b.key.slice(4)))
+            .map((t) => (
+              <div key={t.key} className={cn("absolute inset-0", t.key === active?.key ? "visible" : "invisible")}>
+                <XTermView tab={t} active={t.key === active?.key} />
+              </div>
+            ))}
         </div>
         {/* 右侧面板：窗口够宽时并排显示，窗口较窄时盖在终端上面 */}
         {side && (

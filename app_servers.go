@@ -165,6 +165,29 @@ func (a *App) SaveServer(in ServerInput) (store.Server, error) {
 	return a.serverView(saved), nil
 }
 
+// ReorderServers 调整服务器的先后顺序：ids 里的服务器按给出的顺序，重新排进它们现在占着的那几个位置，没有列出的服务器不动。
+// 这样在筛选或搜索后的列表里拖动卡片，只会调整看得见的这几台之间的顺序。
+func (a *App) ReorderServers(ids []string) error {
+	return a.store.Update(func(d *store.Data) error {
+		var order []*store.Server
+		listed := map[string]bool{}
+		for _, id := range ids {
+			if s := d.Server(id); s != nil && !listed[id] {
+				listed[id] = true
+				order = append(order, s)
+			}
+		}
+		next := 0
+		for i, s := range d.Servers {
+			if listed[s.ID] {
+				d.Servers[i] = order[next]
+				next++
+			}
+		}
+		return nil
+	})
+}
+
 // ServerSecrets 是一台服务器保存的密码（明文），只在界面要显示或复制时读取。
 type ServerSecrets struct {
 	Password      string `json:"password"`

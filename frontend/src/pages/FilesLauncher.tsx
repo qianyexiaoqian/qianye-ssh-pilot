@@ -4,7 +4,7 @@ import { api, on } from "../lib/api";
 import { useApp } from "../lib/store";
 import { openFilesWindow } from "../lib/term";
 import { Badge, Button, Card, Empty, Input, PageHeader, StatusDot } from "../components/ui";
-import { ServerAvatar } from "../components/widgets";
+import { ServerAddr, ServerAvatar } from "../components/widgets";
 
 /** 主窗口里的「文件管理」：选择服务器，在独立窗口里打开它的文件管理 */
 export default function FilesLauncher() {
@@ -65,9 +65,7 @@ export default function FilesLauncher() {
                       <span className="truncate text-[13.5px] font-medium">{s.name}</span>
                       <StatusDot status={status[s.id]?.status} />
                     </div>
-                    <div className="truncate font-mono text-[11.5px] text-muted">
-                      {s.username}@{s.host}:{s.port}
-                    </div>
+                    <ServerAddr server={s} className="block truncate font-mono text-[11.5px] text-muted" />
                   </div>
                   {opened ? (
                     <Badge tone="accent" icon={AppWindow} className="shrink-0">

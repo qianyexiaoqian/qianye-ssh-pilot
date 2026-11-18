@@ -4,7 +4,7 @@ import { api, type OpResult, type ServiceInfo } from "../lib/api";
 import { cn } from "../lib/format";
 import { confirm, toast, useApp } from "../lib/store";
 import { Badge, Button, Empty, Field, IconButton, Input, Modal, Segmented, Select, Spinner, StatusDot } from "../components/ui";
-import { OutputBox, ServerAvatar, ServerPicker } from "../components/widgets";
+import { OutputBox, ServerAddr, ServerAvatar, ServerPicker } from "../components/widgets";
 import { OpResultList } from "../components/QuickRun";
 
 const COMMON = ["nginx", "apache2", "httpd", "haproxy", "openresty", "caddy", "docker", "containerd", "mysql", "mysqld", "mariadb", "postgresql", "redis", "redis-server", "mongod", "php-fpm", "php8.1-fpm", "php8.2-fpm", "php8.3-fpm", "sshd", "ssh", "cron", "crond", "firewalld", "ufw", "fail2ban", "supervisor", "elasticsearch", "rabbitmq-server", "kubelet", "nfs-server", "postfix"];
@@ -97,7 +97,7 @@ export default function Services() {
               <ServerAvatar name={s.name} size={28} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-medium">{s.name}</div>
-                <div className="truncate font-mono text-[11px] text-muted">{s.host}</div>
+                <ServerAddr server={s} user={false} port={false} className="block truncate font-mono text-[11px] text-muted" />
               </div>
               <StatusDot status={status[s.id]?.status} />
             </button>

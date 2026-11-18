@@ -116,6 +116,17 @@ func TestDemoEnvironment(t *testing.T) {
 	mockTargetArgs = `{"certificate":"api.example.org","server":"db-01","cert_path":"` + base + `/ai/fullchain.pem","key_path":"` + base + `/ai/privkey.pem","test_command":"true","services":[],"deploy":true}`
 	// 假模型把用户发来的文件传到 web-01 主目录下的 uploads 文件夹
 	mockUploadDir = "/" + strings.TrimPrefix(filepath.ToSlash(web.Home), "/") + "/uploads/"
+	// 对假模型说“把 db-01 上的面板证书收进证书中心”：它会在服务器上找一遍，再把这张证书导入
+	c3, k3 := selfSigned(t, "panel.example.net")
+	site := base + "/1panel/sites/panel.example.net/ssl"
+	_ = a.pool.WriteFile(context.Background(), d.ID, site+"/fullchain.pem", []byte(c3), "644", "")
+	_ = a.pool.WriteFile(context.Background(), d.ID, site+"/privkey.pem", []byte(k3), "600", "")
+	mockImportArgs = `{"server":"db-01","cert_path":"` + site + `/fullchain.pem","key_path":"` + site + `/privkey.pem"}`
+	// “把 web-01 的发布脚本下载下来”
+	mockDownloadArgs = `{"server":"web-01","paths":["/` + strings.TrimPrefix(filepath.ToSlash(web.Home), "/") + `/deploy.sh"]}`
+	// “把这台服务器加进来”：另起一台假服务器，让假模型用它的地址和密码添加
+	edge := testsshd.Start(t)
+	mockServerArgs = fmt.Sprintf(`{"name":"edge-01","host":%q,"port":%d,"username":%q,"password":%q,"group":"生产","tags":["cdn"]}`, edge.Host, edge.Port, edge.User, edge.Password)
 	settings := a.settings()
 	settings.AI.Provider, settings.AI.Preset, settings.AI.BaseURL, settings.AI.Model = "openai", "custom", mock+"/v1", "mock-ops"
 	// 向量模型也指向本地的模拟接口

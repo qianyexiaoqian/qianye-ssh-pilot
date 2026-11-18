@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Activity, Bot, Cpu, FileSearch, HardDrive, History, MessageSquarePlus, PanelRightOpen, ScrollText, Settings, SquareTerminal, TextSelect, X } from "lucide-react";
+import type { Attachment } from "../lib/api";
+import { attachPaths, mergeAttachments } from "../lib/attach";
 import { cn, timeAgo } from "../lib/format";
 import { useAgent, useOpsAgent } from "../lib/agent";
 import { toast, useApp, type TermTab } from "../lib/store";
 import { useTermUI } from "../lib/term";
+import { DropHint, useAttachDrop } from "./Attachments";
 import { ChatThread, Composer, useStickToBottom } from "./Chat";
 import { readTermText, typeIntoTerm } from "./XTermView";
 import { Button, IconButton, Menu } from "./ui";
@@ -24,7 +27,9 @@ function remember(serverId: string, sessionId: string | null) {
   localStorage.setItem(SESSIONS_KEY, JSON.stringify(m));
 }
 
-const MIN_W = 320;
+/** 面板的最小宽度 */
+export const OPS_MIN_W = 320;
+const MIN_W = OPS_MIN_W;
 const MAX_W = 760;
 
 const prompts = [
@@ -42,12 +47,18 @@ function lineCount(text: string) {
 /**
  * 终端右侧的「AI 运维」面板：直接和 AI 对话，让它操作当前终端所在的服务器。
  * 对话绑定到服务器（后端在系统提示词里说明默认操作这台服务器），每台服务器各有自己的对话。
+ *
+ * maxWidth：和终端并排显示时面板最多能有多宽（要给终端留出最小宽度）；盖在终端上面时不限制。
  */
-export function OpsPanel({ tab, onClose }: { tab: TermTab | undefined; onClose: () => void }) {
+export function OpsPanel({ tab, onClose, maxWidth }: { tab: TermTab | undefined; onClose: () => void; maxWidth?: number }) {
   const { servers, settings, go } = useApp();
   const ops = useOpsAgent();
   const { attach, setAttach } = useTermUI();
   const [input, setInput] = useState("");
+  const [atts, setAtts] = useState<Attachment[]>([]);
+  const attsRef = useRef(atts);
+  attsRef.current = atts;
+  const drop = useAttachDrop<HTMLElement>((paths) => void attachPaths(paths).then((added) => added.length && setAtts(mergeAttachments(attsRef.current, added))));
   const [width, setWidth] = useState(() => Math.min(MAX_W, Math.max(MIN_W, Number(localStorage.getItem("ops-width")) || 420)));
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const serverId = tab?.serverId ?? "";
@@ -78,19 +89,26 @@ export function OpsPanel({ tab, onClose }: { tab: TermTab | undefined; onClose: 
 
   const send = async (text?: string, extra?: string) => {
     const t = (text ?? input).trim();
-    if (!t || running || !serverId) return;
+    const files = atts;
+    if ((!t && files.length === 0) || running || !serverId) return;
     const term = extra ?? attach;
     const fence = "```";
     const body = term ? `${t}\n\n终端里的内容：\n${fence}\n${term}\n${fence}` : t;
     setInput("");
     setAttach("");
+    setAtts([]);
     stick.current = true;
-    const ok = await ops.send(body, serverId);
+    const ok = await ops.send(
+      body,
+      serverId,
+      files.map((a) => a.id),
+    );
     const id = useOpsAgent.getState().currentId;
     if (id) remember(serverId, id);
     if (!ok) {
       setInput(t);
       setAttach(term);
+      setAtts(files);
     }
   };
 
@@ -110,10 +128,11 @@ export function OpsPanel({ tab, onClose }: { tab: TermTab | undefined; onClose: 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = width;
-    let w = startW;
+    let w = width;
+    const limit = Math.min(MAX_W, maxWidth ?? MAX_W);
+    const startW = Math.min(width, limit);
     const move = (ev: MouseEvent) => {
-      w = Math.min(MAX_W, Math.max(MIN_W, startW + startX - ev.clientX));
+      w = Math.min(limit, Math.max(MIN_W, startW + startX - ev.clientX));
       setWidth(w);
     };
     const up = () => {
@@ -130,7 +149,8 @@ export function OpsPanel({ tab, onClose }: { tab: TermTab | undefined; onClose: 
   const empty = ops.messages.length === 0 && !running && !ops.loading;
 
   return (
-    <aside className="relative flex h-full max-w-full shrink-0 flex-col border-l border-line bg-bg2 @max-[560px]/term:!w-full" style={{ width }}>
+    <aside ref={drop.ref} className="relative flex h-full max-w-full shrink-0 flex-col border-l border-line bg-bg2 @max-[560px]/term:!w-full" style={{ width: Math.max(MIN_W, Math.min(width, maxWidth ?? width)) }}>
+      <DropHint show={drop.over && !!tab} compact />
       <div onMouseDown={startResize} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize" title="拖动调整宽度" />
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line pr-1.5 pl-3">
         <Bot size={14} className="shrink-0 text-accent" />
@@ -235,6 +255,8 @@ export function OpsPanel({ tab, onClose }: { tab: TermTab | undefined; onClose: 
               onStop={() => ops.stop()}
               running={running}
               placeholder={running ? "AI 正在处理…" : `让 AI 操作 ${server?.name ?? "这台服务器"}，例如：nginx 为什么起不来`}
+              attachments={atts}
+              onAttachments={setAtts}
               above={
                 attach ? (
                   <div className="mx-1 mt-1 mb-0.5 flex items-center gap-1.5 rounded-lg border border-line bg-bg2 px-2 py-1 text-[11.5px] text-fg2">

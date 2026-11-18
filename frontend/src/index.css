@@ -204,6 +204,12 @@ button {
   transform: translateY(-50%);
 }
 
+/* 鼠标停在窗口上边缘、可以缩放窗口时，Wails 把指针样式写在 <html> 上。
+   页面里的元素各有自己的指针样式（body 就是 default），会把它盖住：这时让它们全部让位。 */
+html[style*="-resize"] * {
+  cursor: inherit !important;
+}
+
 .drag {
   --wails-draggable: drag;
 }

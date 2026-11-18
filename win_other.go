@@ -25,3 +25,5 @@ func showProcessWindows(int, bool) {}
 func idleSeconds() int { return 0 }
 
 func systemProxy() (string, bool) { return "", false }
+
+func installResizeBorders() bool { return false }

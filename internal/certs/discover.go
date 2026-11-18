@@ -16,7 +16,7 @@ import (
 
 // Discovered 是在服务器上发现的证书配置。
 type Discovered struct {
-	Source      string   `json:"source"` // nginx | apache | haproxy | letsencrypt
+	Source      string   `json:"source"` // nginx | apache | haproxy | xboard | letsencrypt
 	CertPath    string   `json:"certPath"`
 	KeyPath     string   `json:"keyPath"`
 	Domains     []string `json:"domains"`
@@ -35,10 +35,29 @@ done
 if [ -f /etc/haproxy/haproxy.cfg ]; then
   grep -oE 'crt[[:space:]]+[^[:space:]]+' /etc/haproxy/haproxy.cfg | awk '{print "haproxy", "crt", $2}'
 fi
-for d in /etc/letsencrypt/live/*/; do
+`
+
+// 放在最后：同一个文件如果已经被上面某个服务的配置引用，就算在那个服务名下（部署后知道该重载谁）。
+const discoverLetsEncrypt = `for d in /etc/letsencrypt/live/*/; do
   [ -f "${d}fullchain.pem" ] && echo "letsencrypt cert ${d}fullchain.pem" && echo "letsencrypt key ${d}privkey.pem"
 done
 true`
+
+// XboardConfigs 是查找 XBoard 节点（xboard-node）配置文件的位置；它的安装脚本把配置放在 /etc/xboard-node/config.yml。
+var XboardConfigs = []string{"/etc/xboard-node/config.yml"}
+
+// xboardAwk 从 xboard-node 的 config.yml 里取出 cert_file / key_file 指向的路径（不管它们嵌套在哪一层）。
+const xboardAwk = `/^[[:space:]-]*(cert_file|key_file)[[:space:]]*:/ { k = $1; gsub(/[[:space:]-]/, "", k); v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v); gsub(/["\047]/, "", v); gsub(/[[:space:]]+$/, "", v); if (v != "") print "xboard", (k == "key_file" ? "key" : "cert"), v }`
+
+func buildDiscoverScript() string {
+	var b strings.Builder
+	b.WriteString(discoverScript)
+	for _, cfg := range XboardConfigs {
+		fmt.Fprintf(&b, "[ -f %[1]s ] && awk -F: '%[2]s' %[1]s\n", sshx.ShellQuote(cfg), xboardAwk)
+	}
+	b.WriteString(discoverLetsEncrypt)
+	return b.String()
+}
 
 func cleanPath(source, p string) string {
 	p = strings.Trim(p, `"'`)
@@ -51,6 +70,8 @@ func cleanPath(source, p string) string {
 			p = path.Join("/etc/nginx", p)
 		case "apache":
 			p = path.Join("/etc/httpd", p)
+		case "xboard":
+			p = path.Join("/etc/xboard-node", p)
 		default:
 			return ""
 		}
@@ -58,9 +79,9 @@ func cleanPath(source, p string) string {
 	return p
 }
 
-// Discover 从 Nginx / Apache / HAProxy / Let's Encrypt 配置中查找证书，并读取每个证书的信息。
+// Discover 从 Nginx / Apache / HAProxy / XBoard 节点的配置和 Let's Encrypt 目录中查找证书，并读取每个证书的信息。
 func Discover(ctx context.Context, pool *sshx.Pool, serverID string) ([]Discovered, error) {
-	res, err := pool.RunScript(ctx, serverID, sshx.Script{Content: discoverScript, Interpreter: "sh"}, sshx.ExecOptions{Privileged: true, Timeout: time.Minute})
+	res, err := pool.RunScript(ctx, serverID, sshx.Script{Content: buildDiscoverScript(), Interpreter: "sh"}, sshx.ExecOptions{Privileged: true, Timeout: time.Minute})
 	if err != nil {
 		return nil, err
 	}

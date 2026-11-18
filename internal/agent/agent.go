@@ -47,6 +47,7 @@ type Agent struct {
 	Long     *LongMemory
 	Skills   *SkillStore
 	Sessions *SessionStore
+	Attach   *AttachStore
 	Learn    *LearnLog
 	tools    []*Tool
 
@@ -64,6 +65,7 @@ func New(cfg Config) *Agent {
 		Long:      NewLongMemory(filepath.Join(cfg.DataDir, "memory")),
 		Skills:    NewSkillStore(filepath.Join(cfg.DataDir, "skills")),
 		Sessions:  NewSessionStore(filepath.Join(cfg.DataDir, "sessions")),
+		Attach:    NewAttachStore(filepath.Join(cfg.DataDir, "attachments"), cfg.ReadOnly),
 		Learn:     NewLearnLog(filepath.Join(cfg.DataDir, "learning.jsonl")),
 		running:   map[string]context.CancelFunc{},
 		approvals: map[string]*pendingApproval{},
@@ -149,6 +151,7 @@ func (a *Agent) ListSessions() []SessionSummary {
 func (a *Agent) DeleteSession(id string) error {
 	a.Stop(id)
 	a.Long.RemoveSession(id)
+	a.Attach.RemoveSession(id)
 	return a.Sessions.Delete(id)
 }
 
@@ -164,10 +167,10 @@ func (a *Agent) RenameSession(id, title string) error {
 	return a.Sessions.Save(s)
 }
 
-// Send 追加一条用户消息并在后台运行一轮对话。
-func (a *Agent) Send(sessionID, text string) error {
+// Send 追加一条用户消息并在后台运行一轮对话。attachIDs 是随消息发送的附件（先用 Attach 添加）。
+func (a *Agent) Send(sessionID, text string, attachIDs ...string) error {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && len(attachIDs) == 0 {
 		return errors.New("消息不能为空")
 	}
 	cfg := a.cfg.Settings()
@@ -183,6 +186,15 @@ func (a *Agent) Send(sessionID, text string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.running[sessionID] = cancel
 	a.mu.Unlock()
+	// 附件从这里开始归这个会话所有；失败时消息没有发出，附件留在输入框里
+	atts, err := a.Attach.take(sessionID, attachIDs)
+	if err != nil {
+		a.mu.Lock()
+		delete(a.running, sessionID)
+		a.mu.Unlock()
+		cancel()
+		return err
+	}
 
 	go func() {
 		defer func() {
@@ -195,7 +207,7 @@ func (a *Agent) Send(sessionID, text string) error {
 			cancel()
 			a.emit(Event{SessionID: sessionID, Type: "done"})
 		}()
-		a.runTurn(ctx, sessionID, text, provider, cfg)
+		a.runTurn(ctx, sessionID, text, atts, provider, cfg)
 	}()
 	return nil
 }
@@ -240,12 +252,36 @@ func (a *Agent) tool(name string) *Tool {
 	return nil
 }
 
-func titleFrom(text string) string {
+func titleFrom(text string, atts []Attachment) string {
 	line := strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
+	if line == "" && len(atts) > 0 {
+		// 只发了附件：文件用文件名，图片（多半是截图）的名字没有意义
+		line = atts[0].Name
+		if atts[0].Kind == AttachImage {
+			line = "图片对话"
+		}
+	}
 	return clip(line, 24)
 }
 
-func (a *Agent) runTurn(ctx context.Context, sessionID, text string, provider Provider, cfg store.AISettings) {
+// chat 调用模型。带着图片的请求被接口拒绝时（多半是模型不支持图片输入），去掉图片再试一次；
+// 再试成功就返回 dropped=true，由调用方告诉用户。
+func chat(ctx context.Context, provider Provider, req ChatRequest, h StreamHandler) (resp *ChatResponse, dropped bool, err error) {
+	resp, err = provider.Chat(ctx, req, h)
+	if err == nil || req.NoImages || ctx.Err() != nil || !rejectsImages(err) || !hasImageData(req.Messages) {
+		return resp, false, err
+	}
+	if h.OnReset != nil {
+		h.OnReset()
+	}
+	req.NoImages = true
+	if resp2, err2 := provider.Chat(ctx, req, h); err2 == nil {
+		return resp2, true, nil
+	}
+	return nil, false, err
+}
+
+func (a *Agent) runTurn(ctx context.Context, sessionID, text string, atts []Attachment, provider Provider, cfg store.AISettings) {
 	lock := a.sessionLock(sessionID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -260,15 +296,17 @@ func (a *Agent) runTurn(ctx context.Context, sessionID, text string, provider Pr
 	}
 	sess.Turns++
 	if sess.Turns == 1 || sess.Title == "" || sess.Title == "新对话" {
-		sess.Title = titleFrom(text)
+		sess.Title = titleFrom(text, atts)
 		a.emit(Event{SessionID: sessionID, Type: "title", Text: sess.Title})
 	}
 	content := text
 	if cfg.NudgeInterval > 0 && sess.Turns%cfg.NudgeInterval == 0 {
 		content += nudgeText
 	}
+	// 附件的说明（和较短的文本文件的内容）跟在用户的话后面，只给模型看
+	content += a.Attach.attachNote(sessionID, atts)
 	turnStart := len(sess.Messages)
-	userMsg := Message{ID: newID(), Role: "user", Content: content, Display: text, CreatedAt: nowMs()}
+	userMsg := Message{ID: newID(), Role: "user", Content: content, Display: text, Attachments: atts, CreatedAt: nowMs()}
 	sess.Messages = append(sess.Messages, userMsg)
 	sess.UpdatedAt = nowMs()
 	_ = a.Sessions.Save(sess)
@@ -291,15 +329,27 @@ func (a *Agent) runTurn(ctx context.Context, sessionID, text string, provider Pr
 
 	toolCalls := 0
 	maxSteps := max(cfg.MaxSteps, 1)
+	// 这个模型已经拒收过图片时不再发送；换了模型会重新尝试
+	imagesOff := ""
+	if sess.NoImageModel != "" && sess.NoImageModel == cfg.Model {
+		imagesOff = "当前模型不能查看图片"
+	}
+	imageCache := map[string][]byte{}
 	for step := 0; step < maxSteps; step++ {
 		a.emit(Event{SessionID: sessionID, Type: "step"})
-		resp, err := provider.Chat(ctx, ChatRequest{
-			System: sess.SystemPrompt, Messages: sess.Messages, Tools: a.tools, MaxTokens: cfg.MaxTokens, Effort: cfg.Effort,
+		resp, dropped, err := chat(ctx, provider, ChatRequest{
+			System: sess.SystemPrompt, Messages: a.Attach.withImages(sessionID, sess.Messages, imagesOff, imageCache),
+			Tools: a.tools, MaxTokens: cfg.MaxTokens, Effort: cfg.Effort, NoImages: imagesOff != "",
 		}, StreamHandler{
 			OnText:     func(s string) { a.emit(Event{SessionID: sessionID, Type: "text", Text: s}) },
 			OnThinking: func(s string) { a.emit(Event{SessionID: sessionID, Type: "thinking", Text: s}) },
 			OnReset:    func() { a.emit(Event{SessionID: sessionID, Type: "reset"}) },
 		})
+		if dropped {
+			imagesOff = "当前模型不能查看图片"
+			sess.NoImageModel = cfg.Model
+			notice(fmt.Sprintf("当前模型（%s）没有接受图片，这次是按没有图片处理的。想让 AI 看图，请在「设置 → AI 模型」里换成支持图片输入的模型。", cfg.Model))
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				notice("已停止")

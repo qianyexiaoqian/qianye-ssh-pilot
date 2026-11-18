@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Activity, Bot, Brain, FileText, KeyRound, MessageSquarePlus, PanelLeft, Pencil, ShieldCheck, SquareTerminal, Stethoscope, Trash2 } from "lucide-react";
+import type { Attachment } from "../lib/api";
+import { attachPaths, mergeAttachments } from "../lib/attach";
 import { cn, compact, timeAgo } from "../lib/format";
 import { useAgent } from "../lib/agent";
 import { confirm, useApp } from "../lib/store";
 import { Badge, Button, IconButton } from "../components/ui";
+import { DropHint, useAttachDrop } from "../components/Attachments";
 import { ChatThread, Composer, useStickToBottom } from "../components/Chat";
 import { QuickRunModal } from "../components/QuickRun";
 import { Logo } from "../components/shell";
@@ -21,6 +24,11 @@ export default function Assistant() {
   const { params, settings, servers, go } = useApp();
   const ag = useAgent();
   const [input, setInput] = useState("");
+  const [atts, setAtts] = useState<Attachment[]>([]);
+  const attsRef = useRef(atts);
+  attsRef.current = atts;
+  // 把文件从资源管理器拖进对话：加为附件
+  const drop = useAttachDrop<HTMLDivElement>((paths) => void attachPaths(paths).then((added) => added.length && setAtts(mergeAttachments(attsRef.current, added))));
   const [runCmd, setRunCmd] = useState<string | null>(null);
   const [showList, setShowList] = useState(false);
   const handled = useRef<Set<unknown>>(new Set());
@@ -48,11 +56,20 @@ export default function Assistant() {
 
   const send = async (text?: string) => {
     const t = (text ?? input).trim();
-    if (!t || running) return;
+    const files = atts;
+    if ((!t && files.length === 0) || running) return;
     setInput("");
+    setAtts([]);
     stick.current = true;
-    const ok = await ag.send(t);
-    if (!ok) setInput(t);
+    const ok = await ag.send(
+      t,
+      "",
+      files.map((a) => a.id),
+    );
+    if (!ok) {
+      setInput(t);
+      setAtts(files);
+    }
   };
 
   const cur = ag.sessions.find((s) => s.id === ag.currentId);
@@ -122,7 +139,8 @@ export default function Assistant() {
       </div>
 
       {/* 对话 */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div ref={drop.ref} className="relative flex min-w-0 flex-1 flex-col">
+        <DropHint show={drop.over} />
         <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3 @[760px]/ai:gap-3 @[760px]/ai:px-5">
           <IconButton icon={PanelLeft} size="sm" title="对话列表" className="@[760px]/ai:hidden" onClick={() => setShowList((v) => !v)} />
           <div className="min-w-0 flex-1">
@@ -210,7 +228,9 @@ export default function Assistant() {
               onStop={() => ag.stop()}
               running={running}
               placeholder={running ? "AI 正在处理…" : "描述你想做的事，例如：检查 web-01 为什么 502"}
-              hint="Enter 发送 · Shift+Enter 换行 · 修改类操作会先征求你的同意"
+              hint="Enter 发送 · Shift+Enter 换行 · 可以粘贴截图、拖入文件"
+              attachments={atts}
+              onAttachments={setAtts}
             />
           </div>
         </div>

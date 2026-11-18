@@ -30,6 +30,8 @@ type Session struct {
 	ServerID string `json:"serverId,omitempty"`
 	// Recalled 是这个会话里已经自动召回过的长期记忆，同一条不重复附带。
 	Recalled []string `json:"recalled,omitempty"`
+	// NoImageModel 记录拒收过图片的模型：之后用同一个模型时不再发送图片。
+	NoImageModel string `json:"noImageModel,omitempty"`
 }
 
 type SessionSummary struct {

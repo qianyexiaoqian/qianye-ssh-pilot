@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { Bot, FolderOpen, LoaderCircle, Minus, Plus, RefreshCw, Route, Search, SquareTerminal, X, Zap } from "lucide-react";
 import { api } from "../lib/api";
 import { cn } from "../lib/format";
@@ -9,7 +9,30 @@ import { Button, Empty, IconButton, Kbd, StatusDot } from "../components/ui";
 import { ServerAvatar } from "../components/widgets";
 import { XTermView } from "../components/XTermView";
 import { QuickPanel } from "../components/QuickCommands";
-import { OpsPanel } from "../components/OpsPanel";
+import { OPS_MIN_W, OpsPanel } from "../components/OpsPanel";
+
+// 侧边面板和终端并排时，终端至少保留这么宽（约 60 列）。放不下就让面板盖在终端上面，而不是把终端挤窄：
+// 终端太窄时命令和提示符会折成好几行，之后再变宽，Shell 重画命令行时很容易错位。
+const MIN_TERM_W = 520;
+const QUICK_W = 272;
+
+/**
+ * 元素的宽度；元素被隐藏（宽度为 0）时保留上一次的值。
+ * 返回的第一项挂在元素的 ref 上：元素是后来才渲染出来的（打开第一个终端之后），所以用回调而不是 useRef。
+ */
+function useWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
+  const [el, setEl] = useState<T | null>(null);
+  const [w, setW] = useState(0);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const read = () => el.offsetWidth > 0 && setW(el.offsetWidth);
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return [setEl, w];
+}
 
 function QuickConnect({ onPick }: { onPick: (id: string) => void }) {
   const { servers, status } = useApp();
@@ -39,6 +62,9 @@ export default function Terminals() {
   const { terms, activeTerm, setActiveTerm, closeTab, openTerminal, reconnectTab, servers, status, settings, loadSettings } = useApp();
   const { side, toggleSide, setSide } = useTermUI();
   const [picker, setPicker] = useState(false);
+  const [rowRef, rowW] = useWidth<HTMLDivElement>();
+  // 放得下「面板 + 最小宽度的终端」时并排显示，否则面板盖在终端上面
+  const docked = rowW >= (side === "quick" ? QUICK_W : OPS_MIN_W) + MIN_TERM_W;
   const active = terms.find((t) => t.key === activeTerm) ?? terms[0];
   // 每台服务器上「AI 运维」对话的状态，显示在终端标签上
   const aiState = useOpsAgent((s) => {
@@ -199,7 +225,7 @@ export default function Terminals() {
           </div>
         </div>
       </div>
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={rowRef} className="relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1">
           {terms.map((t) => (
             <div key={t.key} className={cn("absolute inset-0", t.key === active?.key ? "visible" : "invisible")}>
@@ -209,8 +235,8 @@ export default function Terminals() {
         </div>
         {/* 右侧面板：窗口够宽时并排显示，窗口较窄时盖在终端上面 */}
         {side && (
-          <div className="absolute inset-y-0 right-0 z-10 flex max-w-full justify-end shadow-2xl @max-[560px]/term:left-0 @[820px]/term:static @[820px]/term:z-auto @[820px]/term:shadow-none">
-            {side === "quick" ? <QuickPanel onClose={() => setSide(null)} /> : <OpsPanel tab={active} onClose={() => setSide(null)} />}
+          <div className={cn("flex max-w-full justify-end", !docked && "absolute inset-y-0 right-0 z-10 shadow-2xl @max-[560px]/term:left-0")} data-side-docked={docked}>
+            {side === "quick" ? <QuickPanel onClose={() => setSide(null)} /> : <OpsPanel tab={active} onClose={() => setSide(null)} maxWidth={docked ? rowW - MIN_TERM_W : undefined} />}
           </div>
         )}
       </div>

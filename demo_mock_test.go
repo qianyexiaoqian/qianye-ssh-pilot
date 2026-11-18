@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,38 @@ func mockVector(text string) []float32 {
 	return v
 }
 
+// mockUploadDir 是假模型调用 upload_attachment 时填写的目标目录；测试和演示环境把它指到假服务器的主目录下面。
+var mockUploadDir = "/tmp/sshpilot-demo/uploads/"
+
+// mockTargetArgs 是假模型调用 save_deploy_target 时填写的参数（JSON）：用户说“把……证书部署到……”时，
+// 假模型先看证书库，再用这组参数添加部署目标并部署。为空时不走这个流程。
+var mockTargetArgs = ""
+
+// mockAttachRe 匹配附件说明里的一行：ID、文件名和类型。
+var mockAttachRe = regexp.MustCompile(`- ([a-f0-9]{16})「([^」]+)」：(文本文件|二进制文件|图片)([^\n]*)`)
+
+// mockContent 取出一条消息的文字和图片数量（带图片时 content 是数组）。
+func mockContent(c any) (text string, images int) {
+	switch v := c.(type) {
+	case string:
+		return v, 0
+	case []any:
+		for _, p := range v {
+			part, _ := p.(map[string]any)
+			switch part["type"] {
+			case "text":
+				s, _ := part["text"].(string)
+				text += s
+			case "image_url":
+				images++
+			}
+		}
+	}
+	return text, images
+}
+
 // startMockModel 启动一个按对话进度返回预设内容的 OpenAI 兼容流式接口（仅用于界面验收）。
+// 模型名为 mock-novision 时，像不支持图片的模型一样拒绝带图片的请求。
 func startMockModel(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -82,6 +114,7 @@ func startMockModel(t *testing.T) string {
 			return
 		}
 		var body struct {
+			Model    string `json:"model"`
 			Messages []struct {
 				Role      string `json:"role"`
 				Content   any    `json:"content"`
@@ -96,7 +129,15 @@ func startMockModel(t *testing.T) string {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		// 与 DeepSeek 的思考模式保持一致：带工具调用的助手消息必须把 reasoning_content 原样带回
 		bound, steps := false, 0
+		turnText, turnImages := "", 0
 		for _, m := range body.Messages {
+			if m.Role == "user" {
+				turnText, turnImages = mockContent(m.Content)
+				if turnImages > 0 && body.Model == "mock-novision" {
+					http.Error(w, `{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[1]: unknown variant `+"`image_url`, expected `text`"+`","type":"invalid_request_error"}}`, http.StatusBadRequest)
+					return
+				}
+			}
 			if m.Role == "system" {
 				if c, ok := m.Content.(string); ok && strings.Contains(c, "# 当前终端") {
 					bound = true
@@ -144,6 +185,76 @@ func startMockModel(t *testing.T) string {
 			send(map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "call_" + name, "type": "function", "function": map[string]any{"name": name, "arguments": args}}}}, "tool_calls")
 		}
 		think := func(s string) { send(map[string]any{"reasoning_content": s}, "") }
+		done := func() {
+			send(map[string]any{}, "stop")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flush()
+		}
+		// 用户随消息发来了图片或文件：看图、阅读较长的文本、或者按用户说的传到服务器
+		if own, _, ok := strings.Cut(turnText, "<attachments>"); ok {
+			var file, long []string
+			for _, m := range mockAttachRe.FindAllStringSubmatch(turnText, -1) {
+				if m[3] != "图片" && file == nil {
+					file = m
+				}
+				if strings.Contains(m[4], "read_attachment") && long == nil {
+					long = m
+				}
+			}
+			wantUpload := file != nil && (strings.Contains(own, "上传") || strings.Contains(own, "传到") || strings.Contains(own, "部署"))
+			switch {
+			case lastTool == "upload_attachment":
+				text("**已经传上去了**，文件在服务器的 `" + mockUploadDir + "` 目录里。\n\n接下来可以解压或安装，例如：\n\n```bash\nls -l " + mockUploadDir + "\n```\n")
+			case lastTool == "read_attachment":
+				text("这份文件我读了开头的部分，格式正常，没有看到报错。需要我接着往后读，或者传到服务器上用 grep 统计吗？")
+			case wantUpload:
+				think("用户要把文件放到服务器上，用 upload_attachment 传过去。")
+				text("好的，我把「" + file[2] + "」传到服务器上，")
+				args := map[string]any{"attachment": file[1], "servers": []string{"web-01"}, "path": mockUploadDir}
+				if bound {
+					args["servers"] = []string{}
+				}
+				b, _ := json.Marshal(args)
+				call("upload_attachment", string(b))
+				fmt.Fprint(w, "data: [DONE]\n\n")
+				flush()
+				return
+			case long != nil:
+				think("文件比较长，内容没有直接附在消息里，先读开头的部分。")
+				text("这个文件比较长，我先读一下开头的部分。")
+				call("read_attachment", `{"attachment":"`+long[1]+`","max_lines":20}`)
+				fmt.Fprint(w, "data: [DONE]\n\n")
+				flush()
+				return
+			case turnImages > 0:
+				text(fmt.Sprintf("我看到了你发来的 %d 张图片。图里是一段终端输出，最后一行报的是 `Permission denied`，多半是当前用户对那个目录没有写入权限。", turnImages))
+			case file != nil:
+				text("我看了你发来的「" + file[2] + "」，内容已经附在消息里了：配置的写法没有问题。需要的话我可以把它传到服务器上替换现有的配置。")
+			default:
+				text("图片我这边没有收到内容，只看到了文件名。")
+			}
+			done()
+			return
+		}
+		// 让 AI 把证书部署到一个还没有部署目标的地方：看证书库 → 添加部署目标并部署 → 结论
+		if mockTargetArgs != "" && strings.Contains(turnText, "证书") && strings.Contains(turnText, "部署到") {
+			switch lastTool {
+			case "":
+				think("先看看证书库里这张证书的情况。")
+				text("我先看一下证书库。")
+				call("list_certificates", `{}`)
+			case "list_certificates":
+				think("这张证书在那台服务器上还没有部署目标，直接添加并部署。")
+				text("这张证书在那台服务器上还没有部署目标，我来添加并部署，")
+				call("save_deploy_target", mockTargetArgs)
+			default:
+				text("**证书已经部署好了**：新的部署目标已经保存，以后证书更新时也会同步到这里。")
+				send(map[string]any{}, "stop")
+			}
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flush()
+			return
+		}
 		if bound {
 			// 从终端的「AI 运维」发起的对话：看终端 → 只读命令 → 需要批准的修改 → 结论
 			switch {

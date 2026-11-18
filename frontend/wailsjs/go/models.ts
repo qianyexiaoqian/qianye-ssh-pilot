@@ -28,6 +28,36 @@ export namespace agent {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class Attachment {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    mime?: string;
+	    size: number;
+	    width?: number;
+	    height?: number;
+	    text?: boolean;
+	    file?: string;
+	    path?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Attachment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.mime = source["mime"];
+	        this.size = source["size"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.text = source["text"];
+	        this.file = source["file"];
+	        this.path = source["path"];
+	    }
+	}
 	export class Block {
 	    type: string;
 	    text?: string;
@@ -163,6 +193,7 @@ export namespace agent {
 	    provider?: string;
 	    model?: string;
 	    kind?: string;
+	    attachments?: Attachment[];
 	    createdAt: number;
 	
 	    static createFrom(source: any = {}) {
@@ -185,6 +216,7 @@ export namespace agent {
 	        this.provider = source["provider"];
 	        this.model = source["model"];
 	        this.kind = source["kind"];
+	        this.attachments = this.convertValues(source["attachments"], Attachment);
 	        this.createdAt = source["createdAt"];
 	    }
 	
@@ -399,6 +431,7 @@ export namespace main {
 	    migratedFrom: string;
 	    justMigrated: boolean;
 	    previousDataDir: string;
+	    nativeResize: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppInfo(source);
@@ -420,7 +453,40 @@ export namespace main {
 	        this.migratedFrom = source["migratedFrom"];
 	        this.justMigrated = source["justMigrated"];
 	        this.previousDataDir = source["previousDataDir"];
+	        this.nativeResize = source["nativeResize"];
 	    }
+	}
+	export class AttachResult {
+	    added: agent.Attachment[];
+	    errors: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AttachResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.added = this.convertValues(source["added"], agent.Attachment);
+	        this.errors = source["errors"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class AuthorizedKeyView {
 	    line: string;

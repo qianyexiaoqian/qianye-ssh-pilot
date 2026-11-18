@@ -14,6 +14,7 @@ import {
   Layers,
   Lock,
   Maximize2,
+  Minimize2,
   Menu as MenuIcon,
   Minus,
   Moon,
@@ -36,6 +37,7 @@ import { useApp, useConfirm, useToasts, type Page } from "../lib/store";
 import { useAgent } from "../lib/agent";
 import { useQuick } from "../lib/quick";
 import { useViewport } from "../lib/viewport";
+import { useWindowState } from "../lib/chrome";
 import type { Server as ServerModel } from "../lib/api";
 import { Button, Kbd, StatusDot } from "./ui";
 
@@ -238,11 +240,12 @@ function LockButton() {
 }
 
 export function WindowButtons() {
+  const maximised = useWindowState((s) => s.maximised);
   return (
     <>
-      <WinButton onClick={() => runtime.WindowMinimise()} icon={<Minus size={15} />} />
-      <WinButton onClick={() => runtime.WindowToggleMaximise()} icon={<Maximize2 size={13} />} />
-      <WinButton onClick={() => runtime.Quit()} icon={<X size={16} />} danger />
+      <WinButton onClick={() => runtime.WindowMinimise()} icon={<Minus size={15} />} title="最小化" />
+      <WinButton onClick={() => runtime.WindowToggleMaximise()} icon={maximised ? <Minimize2 size={13} /> : <Maximize2 size={13} />} title={maximised ? "向下还原（还原后可以拖动窗口边缘调整大小）" : "最大化"} />
+      <WinButton onClick={() => runtime.Quit()} icon={<X size={16} />} title="关闭" danger />
     </>
   );
 }
@@ -329,9 +332,9 @@ export function FilesTitleBar({ server }: { server: ServerModel | undefined }) {
   );
 }
 
-function WinButton({ onClick, icon, danger }: { onClick: () => void; icon: React.ReactNode; danger?: boolean }) {
+function WinButton({ onClick, icon, danger, title }: { onClick: () => void; icon: React.ReactNode; danger?: boolean; title: string }) {
   return (
-    <button type="button" onClick={onClick} className={cn("flex h-[40px] w-[46px] shrink-0 items-center justify-center text-fg2 transition-colors", danger ? "hover:bg-[#e81123] hover:text-white" : "hover:bg-panel3")}>
+    <button type="button" onClick={onClick} title={title} className={cn("flex h-[40px] w-[46px] shrink-0 items-center justify-center text-fg2 transition-colors", danger ? "hover:bg-[#e81123] hover:text-white" : "hover:bg-panel3")}>
       {icon}
     </button>
   );

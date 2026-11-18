@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronRight, Copy, CornerDownLeft, Ellipsis, Layers, Pencil, Plus, Search, ShieldAlert, Trash2, X, Zap } from "lucide-react";
 import { runtime, type QuickCommand } from "../lib/api";
 import { cn } from "../lib/format";
@@ -15,12 +15,23 @@ export function QuickPanel({ onClose }: { onClose: () => void }) {
   const { commands, loaded, load, use, edit, remove, move, broadcast, setBroadcast } = useQuick();
   const terms = useApp((s) => s.terms);
   const [q, setQ] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // 分组默认折叠，点开哪个看哪个；面板每次打开都从折叠开始
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ cmd: QuickCommand; x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!loaded) void load();
   }, [loaded, load]);
+
+  // 刚添加的命令：展开它所在的分组，让用户看到它
+  const known = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!loaded) return;
+    const prev = known.current;
+    known.current = new Set(commands.map((c) => c.id));
+    const fresh = prev ? commands.filter((c) => !prev.has(c.id)) : [];
+    if (fresh.length) setExpanded((e) => ({ ...e, ...Object.fromEntries(fresh.map((c) => [c.group || UNGROUPED, true])) }));
+  }, [commands, loaded]);
 
   const openCount = terms.filter((t) => t.state === "open").length;
   const groups = useMemo(() => {
@@ -85,12 +96,13 @@ export function QuickPanel({ onClose }: { onClose: () => void }) {
         )}
         {commands.length > 0 && groups.length === 0 && <div className="px-3 py-8 text-center text-[12.5px] text-muted">没有匹配的命令</div>}
         {groups.map(([g, list]) => {
-          const closed = !q && collapsed[g];
+          // 搜索时全部展开；只有一个分组时没有折叠的必要，默认展开
+          const closed = !q && !(expanded[g] ?? groups.length === 1);
           return (
-            <div key={g} className="mb-1">
+            <div key={g} className="mb-1" data-quick-group={g} data-open={!closed}>
               <button
                 type="button"
-                onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
+                onClick={() => setExpanded((e) => ({ ...e, [g]: closed }))}
                 className="flex h-7 w-full items-center gap-1 rounded-md px-1.5 text-left text-[11.5px] font-semibold tracking-wide text-muted hover:text-fg2"
               >
                 <ChevronRight size={12} className={cn("transition-transform", !closed && "rotate-90")} />

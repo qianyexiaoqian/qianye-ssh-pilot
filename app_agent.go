@@ -58,7 +58,10 @@ func (a *App) AgentGetSession(id string) (SessionView, error) {
 		OutputTokens: s.OutputTokens, ApproveAll: s.ApproveAll, Learned: s.Learned, ServerID: s.ServerID}, nil
 }
 
-func (a *App) AgentSend(id, text string) error { return a.agent.Send(id, text) }
+// AgentSend 发送一条消息；attachments 是随消息发送的附件 ID（先用 AgentPickFiles 等添加）。
+func (a *App) AgentSend(id, text string, attachments []string) error {
+	return a.agent.Send(id, text, attachments...)
+}
 
 func (a *App) AgentStop(id string) { a.agent.Stop(id) }
 

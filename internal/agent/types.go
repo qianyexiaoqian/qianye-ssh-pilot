@@ -43,7 +43,9 @@ type Message struct {
 	Provider   string     `json:"provider,omitempty"`
 	Model      string     `json:"model,omitempty"`
 	Kind       string     `json:"kind,omitempty"` // notice：只在界面显示，不发送给模型
-	CreatedAt  int64      `json:"createdAt"`
+	// Attachments 是用户随这条消息附带的图片和文件。
+	Attachments []Attachment `json:"attachments,omitempty"`
+	CreatedAt   int64        `json:"createdAt"`
 }
 
 // ToolResult 是工具执行结果：Content 发送给模型，Meta 供界面渲染。
@@ -107,7 +109,9 @@ func strEnum(desc string, values ...string) map[string]any {
 	return map[string]any{"type": "string", "description": desc, "enum": values}
 }
 
-func integer(desc string) map[string]any { return map[string]any{"type": "integer", "description": desc} }
+func integer(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
 
 func strArray(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}

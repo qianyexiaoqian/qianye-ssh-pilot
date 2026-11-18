@@ -15,6 +15,36 @@ type ChatRequest struct {
 	Tools     []*Tool
 	MaxTokens int
 	Effort    string
+	// NoImages 为 true 时不发送图片，图片的位置用一句文字说明代替（模型不支持图片输入时）。
+	NoImages bool
+}
+
+// APIError 是模型接口返回的错误，带着 HTTP 状态码。
+type APIError struct {
+	Status int
+	Msg    string
+}
+
+func (e *APIError) Error() string { return e.Msg }
+
+// rejectsImages 判断一次带图片的请求失败，是不是因为接口不接受图片（或者请求太大）：这类错误值得去掉图片再试一次。
+func rejectsImages(err error) bool {
+	var e *APIError
+	if !errors.As(err, &e) {
+		return false
+	}
+	switch e.Status {
+	case 400, 404, 413, 415, 422:
+		return true
+	}
+	// 有的服务用别的状态码拒绝图片，错误信息里会提到图片
+	msg := strings.ToLower(e.Msg)
+	for _, word := range []string{"image", "vision", "multimodal", "图片", "图像", "多模态"} {
+		if strings.Contains(msg, word) {
+			return true
+		}
+	}
+	return false
 }
 
 type ChatResponse struct {

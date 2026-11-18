@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -73,7 +75,29 @@ func unexported(v reflect.Value, name string) reflect.Value {
 	return reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
 }
 
+// parkForQA 在窗口显示之前把它放到指定的位置（通常是屏幕外面），并且让它显示时不抢焦点：
+// 验收是在用户正在使用的电脑上进行的，测试窗口不应该弹到用户面前、打断正在输入的内容。
+// 位置由环境变量 SSHPILOT_QA_POS=x,y 给出（物理像素），文件管理窗口的进程会继承这个变量。
+func parkForQA() {
+	pos := strings.Split(os.Getenv("SSHPILOT_QA_POS"), ",")
+	if len(pos) != 2 {
+		return
+	}
+	x, errX := strconv.Atoi(strings.TrimSpace(pos[0]))
+	y, errY := strconv.Atoi(strings.TrimSpace(pos[1]))
+	hwnd := ownWindow(wailsWindowClass)
+	if errX != nil || errY != nil || hwnd == 0 {
+		return
+	}
+	exStyle := int32(-20) // GWL_EXSTYLE
+	ex, _, _ := procGetWindowLongPtr.Call(uintptr(hwnd), uintptr(exStyle))
+	_, _, _ = procSetWindowLongPtr.Call(uintptr(hwnd), uintptr(exStyle), ex|0x08000000) // WS_EX_NOACTIVATE
+	// SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+	_, _, _ = procSetWindowPos.Call(uintptr(hwnd), 0, uintptr(x), uintptr(y), 0, 0, 0x0001|0x0004|0x0010)
+}
+
 func (a *App) startQA() {
+	parkForQA()
 	fe := reflect.ValueOf(a.ctx.Value("frontend"))
 	if !fe.IsValid() || fe.Kind() != reflect.Ptr {
 		return

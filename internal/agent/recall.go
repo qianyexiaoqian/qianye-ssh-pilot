@@ -220,10 +220,7 @@ func (a *Agent) episodeOf(sess *Session, turn int, msgs []Message) (MemItem, boo
 		switch m.Role {
 		case "user":
 			if question == "" {
-				question = m.Display
-				if question == "" {
-					question = m.Content
-				}
+				question = shown(m)
 				created = m.CreatedAt
 			}
 		case "assistant":

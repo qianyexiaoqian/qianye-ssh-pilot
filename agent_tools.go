@@ -162,6 +162,10 @@ func (a *App) runForAgent(ctx context.Context, servers []store.Server, p *runPla
 }
 
 func (a *App) opsTools() []*agent.Tool {
+	return slices.Concat(a.serverTools(), a.targetTools(), a.attachTools())
+}
+
+func (a *App) serverTools() []*agent.Tool {
 	return []*agent.Tool{
 		{
 			Name:        "list_servers",
@@ -431,7 +435,7 @@ func (a *App) opsTools() []*agent.Tool {
 		},
 		{
 			Name:        "list_certificates",
-			Description: "列出证书库中的 TLS 证书：域名、签发者、到期时间，以及每个部署目标（服务器与路径）的同步状态。",
+			Description: "列出证书库中的 TLS 证书：域名、签发者、到期时间，以及每个部署目标（服务器、路径、部署后怎样重载服务）和它的同步状态。",
 			Schema:      agent.Obj(map[string]any{}),
 			Handler: func(_ context.Context, _ *agent.ToolContext, _ json.RawMessage) (*agent.ToolResult, error) {
 				list := a.ListCerts()
@@ -456,9 +460,12 @@ func (a *App) opsTools() []*agent.Tool {
 							state = "版本落后"
 						}
 						fmt.Fprintf(&b, "- 目标 %s：%s → %s｜%s\n", t.ID, t.ServerName, t.CertPath, state)
+						for _, line := range strings.Split(strings.TrimSpace(describeTarget(t.DeployTarget)), "\n")[1:] {
+							b.WriteString("  " + line + "\n")
+						}
 					}
 					if len(c.Targets) == 0 {
-						b.WriteString("- （没有部署目标）\n")
+						b.WriteString("- （没有部署目标：需要部署时用 save_deploy_target 添加）\n")
 					}
 				}
 				return &agent.ToolResult{Content: b.String()}, nil
@@ -467,7 +474,7 @@ func (a *App) opsTools() []*agent.Tool {
 		{
 			Name: "deploy_certificate",
 			Description: "把证书库中的证书同步到它的部署目标：自动备份旧文件、上传、校验哈希、执行配置检测、重载服务并做线上 TLS 验证，失败自动回滚。需要用户批准。" +
-				"certificate 可填证书名称、ID 或域名；servers 可选，用于只同步部分服务器上的目标。",
+				"certificate 可填证书名称、ID 或域名；servers 可选，用于只同步部分服务器上的目标。证书还没有部署目标、或目标的路径不对时，先用 save_deploy_target 添加或修改。",
 			Schema: agent.Obj(map[string]any{
 				"certificate": agent.Str("证书名称、ID 或其中一个域名"),
 				"servers":     agent.StrArray("只部署到这些服务器上的目标（可选）"),
@@ -480,17 +487,9 @@ func (a *App) opsTools() []*agent.Tool {
 				if err := parseArgs(raw, &in); err != nil {
 					return nil, err
 				}
-				ref := strings.TrimSpace(in.Certificate)
-				var cert *CertView
-				for _, c := range a.ListCerts() {
-					if c.ID == ref || strings.EqualFold(c.Name, ref) || slices.Contains(c.Domains, ref) {
-						cp := c
-						cert = &cp
-						break
-					}
-				}
-				if cert == nil {
-					return nil, fmt.Errorf("没有找到证书 %s", ref)
+				cert, err := a.findCert(in.Certificate)
+				if err != nil {
+					return nil, err
 				}
 				var filter []string
 				if len(in.Servers) > 0 {
@@ -508,7 +507,7 @@ func (a *App) opsTools() []*agent.Tool {
 					}
 				}
 				if len(targetIDs) == 0 {
-					return nil, errors.New("没有匹配的部署目标，请先在「证书」页为该证书添加部署目标")
+					return nil, errors.New("这张证书在这些服务器上还没有部署目标。用 save_deploy_target 添加（要填服务器、证书和私钥在服务器上的路径、部署后要重载的服务；加上 deploy=true 可以保存后立即部署），不需要用户自己去「证书」页填写")
 				}
 				if !tc.Approve(agent.ApprovalRequest{Tool: "deploy_certificate", Title: "部署证书 " + cert.Name, Detail: strings.Join(desc, "\n"), Risk: agent.RiskChange,
 					Reason: fmt.Sprintf("有效期至 %s", time.UnixMilli(cert.NotAfter).Format("2006-01-02"))}) {
@@ -518,20 +517,7 @@ func (a *App) opsTools() []*agent.Tool {
 				if err != nil {
 					return nil, err
 				}
-				var b strings.Builder
-				for _, r := range results {
-					mark := "✅"
-					if !r.Success {
-						mark = "❌"
-					}
-					fmt.Fprintf(&b, "%s %s：%s\n", mark, r.ServerName, r.Message)
-					for _, s := range r.Steps {
-						if s.Status == "failed" || s.Status == "warning" {
-							fmt.Fprintf(&b, "   - %s（%s）：%s\n", s.Label, s.Status, clipText(s.Message, 400))
-						}
-					}
-				}
-				return &agent.ToolResult{Content: b.String(), Meta: map[string]any{"kind": "deploy", "results": results}}, nil
+				return &agent.ToolResult{Content: deployReport(results), Meta: map[string]any{"kind": "deploy", "results": results}}, nil
 			},
 		},
 		{

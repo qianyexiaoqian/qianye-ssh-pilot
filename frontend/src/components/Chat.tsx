@@ -16,6 +16,7 @@ import {
   History,
   Layers,
   LoaderCircle,
+  Paperclip,
   Play,
   Rocket,
   Save,
@@ -28,12 +29,15 @@ import {
   SquareTerminal,
   Stethoscope,
   TriangleAlert,
+  Upload,
   User,
   Wrench,
 } from "lucide-react";
-import type { AgentMessage, ApprovalRequest, RecallItem, ToolCall } from "../lib/api";
+import type { AgentMessage, ApprovalRequest, Attachment, RecallItem, ToolCall } from "../lib/api";
+import { attachPasted, discardAttachments, mergeAttachments, pickAttachments } from "../lib/attach";
 import { cn, formatDate, stripAnsi } from "../lib/format";
 import type { AgentStore } from "../lib/agent";
+import { AttachmentList } from "./Attachments";
 import { Badge, Button, Spinner } from "./ui";
 import { CodeBlock, Markdown, OutputBox } from "./widgets";
 
@@ -49,6 +53,7 @@ const toolMeta: Record<string, { icon: typeof Bot; label: string }> = {
   list_servers: { icon: Server, label: "查看服务器" },
   list_certificates: { icon: ShieldCheck, label: "查看证书" },
   deploy_certificate: { icon: Rocket, label: "部署证书" },
+  save_deploy_target: { icon: ShieldCheck, label: "设置部署目标" },
   list_scripts: { icon: FileCode, label: "查看脚本库" },
   run_script: { icon: Play, label: "执行脚本" },
   save_script: { icon: Save, label: "保存脚本" },
@@ -59,6 +64,8 @@ const toolMeta: Record<string, { icon: typeof Bot; label: string }> = {
   skill_manage: { icon: Sparkles, label: "沉淀技能" },
   session_search: { icon: Search, label: "检索历史对话" },
   recall: { icon: History, label: "检索长期记忆" },
+  read_attachment: { icon: Paperclip, label: "阅读附件" },
+  upload_attachment: { icon: Upload, label: "上传到服务器" },
 };
 
 const memoryTarget: Record<string, string> = { memory: "核心记忆", user: "用户画像", longterm: "长期记忆" };
@@ -72,7 +79,8 @@ function parseArgs(s: string): Record<string, any> {
   }
 }
 
-function toolSummary(call: ToolCall): string {
+/** names 是这个对话里附件的 ID → 文件名，工具参数里填的是 ID */
+function toolSummary(call: ToolCall, names: Record<string, string> = {}): string {
   const a = parseArgs(call.arguments);
   const servers = Array.isArray(a.servers) ? a.servers.join("、") : a.server ?? "";
   const at = (text: string) => (servers ? `${servers} · ${text}` : text);
@@ -92,6 +100,8 @@ function toolSummary(call: ToolCall): string {
       return servers || "全部服务器";
     case "deploy_certificate":
       return a.certificate ?? "";
+    case "save_deploy_target":
+      return `${a.certificate ?? ""}${a.action === "remove" ? " · 删除" : a.cert_path ? ` → ${servers ? servers + ":" : ""}${a.cert_path}` : ""}${a.deploy ? " · 立即部署" : ""}`;
     case "run_script":
       return `${a.script ?? ""} → ${servers}`;
     case "save_script":
@@ -108,11 +118,15 @@ function toolSummary(call: ToolCall): string {
     case "list_servers":
     case "list_scripts":
       return a.keyword ?? "";
+    case "read_attachment":
+      return names[a.attachment] ?? a.attachment ?? "";
+    case "upload_attachment":
+      return at(`${names[a.attachment] ?? a.attachment ?? ""} → ${a.path ?? ""}`);
   }
   return "";
 }
 
-function ToolCard({ call, result, running }: { call: ToolCall; result?: AgentMessage; running: boolean }) {
+function ToolCard({ call, result, running, names }: { call: ToolCall; result?: AgentMessage; running: boolean; names?: Record<string, string> }) {
   const [open, setOpen] = useState(false);
   const meta = toolMeta[call.name] ?? { icon: Wrench, label: call.name };
   const args = parseArgs(call.arguments);
@@ -125,7 +139,7 @@ function ToolCard({ call, result, running }: { call: ToolCall; result?: AgentMes
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex h-10 w-full items-center gap-2.5 px-3 text-left hover:bg-panel2/60">
         <meta.icon size={14} className={cn("shrink-0", learning ? "text-accent" : "text-muted")} />
         <span className="shrink-0 text-[12.5px] font-medium text-fg2">{meta.label}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{toolSummary(call)}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-muted">{toolSummary(call, names)}</span>
         {status === "running" && <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" />}
         {status === "pending" && <span className="shrink-0 text-[11.5px] text-muted">未完成</span>}
         {status === "ok" && <CircleCheck size={14} className="shrink-0 text-ok" />}
@@ -305,6 +319,11 @@ export function ChatThread({ store, compact, onRun, runLabel }: { store: AgentSt
     for (const x of ag.messages) if (x.role === "tool" && x.toolCallId) m[x.toolCallId] = x;
     return m;
   }, [ag.messages]);
+  const attachNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const x of ag.messages) for (const a of (x.attachments ?? []) as Attachment[]) m[a.id] = a.name;
+    return m;
+  }, [ag.messages]);
 
   return (
     <>
@@ -331,13 +350,17 @@ export function ChatThread({ store, compact, onRun, runLabel }: { store: AgentSt
               <span className="rounded-full border border-line bg-panel px-3 py-1 text-center text-[12px] text-muted">{m.content}</span>
             </div>
           );
-        if (m.role === "user")
+        if (m.role === "user") {
+          const atts = (m.attachments ?? []) as Attachment[];
+          // 只发了附件、没有写字的消息不显示空气泡
+          const text = m.display || (atts.length ? "" : m.content);
           return (
             <div key={m.id} className="flex justify-end gap-3">
               <div className={cn("flex min-w-0 flex-col items-end gap-1.5", compact ? "max-w-[92%]" : "max-w-[78%]")}>
-                <div className={cn("selectable max-w-full rounded-2xl rounded-tr-md bg-accent/14 leading-relaxed break-words whitespace-pre-wrap text-fg", compact ? "px-3 py-2 text-[13px]" : "px-4 py-2.5 text-[13.5px]")}>
-                  {m.display || m.content}
-                </div>
+                <AttachmentList items={atts} sessionId={ag.currentId} align="end" />
+                {text && (
+                  <div className={cn("selectable max-w-full rounded-2xl rounded-tr-md bg-accent/14 leading-relaxed break-words whitespace-pre-wrap text-fg", compact ? "px-3 py-2 text-[13px]" : "px-4 py-2.5 text-[13.5px]")}>{text}</div>
+                )}
                 <RecallChip items={((m.meta ?? {}) as { recall?: RecallItem[] }).recall} />
               </div>
               {!compact && (
@@ -347,6 +370,7 @@ export function ChatThread({ store, compact, onRun, runLabel }: { store: AgentSt
               )}
             </div>
           );
+        }
         return (
           <div key={m.id} className="flex gap-3">
             {!compact && <AssistantAvatar />}
@@ -354,7 +378,7 @@ export function ChatThread({ store, compact, onRun, runLabel }: { store: AgentSt
               {m.thinking && <Thinking text={m.thinking} />}
               {m.content && <Markdown text={m.content} onRun={onRun} runLabel={runLabel} />}
               {(m.toolCalls ?? []).map((c) => (
-                <ToolCard key={c.id} call={c} result={results[c.id]} running={running && ag.live.activeTool === c.id} />
+                <ToolCard key={c.id} call={c} result={results[c.id]} running={running && ag.live.activeTool === c.id} names={attachNames} />
               ))}
             </div>
           </div>
@@ -414,6 +438,8 @@ export function Composer({
   compact,
   above,
   inputRef,
+  attachments,
+  onAttachments,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -426,9 +452,27 @@ export function Composer({
   /** 显示在输入框上方的内容（例如随消息附带的终端输出） */
   above?: ReactNode;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /** 准备随消息发送的图片和文件；传了 onAttachments 才显示添加附件的入口 */
+  attachments?: Attachment[];
+  onAttachments?: (next: Attachment[]) => void;
 }) {
   const own = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? own;
+  const list = attachments ?? [];
+  // 添加附件要等后端处理完：期间用户可能又加了别的，合并时以最新的列表为准
+  const latest = useRef(list);
+  latest.current = list;
+  const [picking, setPicking] = useState(false);
+  const add = (added: Attachment[]) => {
+    if (added.length) onAttachments?.(mergeAttachments(latest.current, added));
+  };
+  const pick = async () => {
+    setPicking(true);
+    add(await pickAttachments());
+    setPicking(false);
+    ref.current?.focus();
+  };
+  const canSend = !!value.trim() || list.length > 0;
   // 内容变化（包括发送后清空）时按内容调整高度
   useEffect(() => {
     const el = ref.current;
@@ -439,10 +483,29 @@ export function Composer({
   return (
     <div className={cn("rounded-2xl border bg-panel shadow-lg transition-colors", compact ? "p-1.5" : "p-2", "border-line2 focus-within:border-accent/50 focus-within:shadow-[var(--glow)]")}>
       {above}
+      {list.length > 0 && (
+        <div className={cn(compact ? "px-1.5 pt-2 pb-1" : "px-2 pt-2 pb-1")}>
+          <AttachmentList
+            items={list}
+            sessionId={null}
+            onRemove={(a) => {
+              discardAttachments([a]);
+              onAttachments?.(latest.current.filter((x) => x.id !== a.id));
+            }}
+          />
+        </div>
+      )}
       <textarea
         ref={ref}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onPaste={(e) => {
+          // 粘贴截图或复制的文件：加为附件。剪贴板里同时有文字时（例如从表格里复制）按文字粘贴
+          const files = Array.from(e.clipboardData.files);
+          if (!onAttachments || !files.length || e.clipboardData.getData("text/plain")) return;
+          e.preventDefault();
+          void attachPasted(files).then(add);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -454,13 +517,27 @@ export function Composer({
         className={cn("block w-full resize-none bg-transparent leading-relaxed outline-none placeholder:text-muted", compact ? "max-h-[140px] min-h-[36px] px-2 py-1.5 text-[13px]" : "max-h-[200px] min-h-[44px] px-2.5 py-2 text-[13.5px]")}
       />
       <div className="flex items-center justify-between gap-2 px-1">
-        <span className="min-w-0 truncate text-[11.5px] text-muted">{hint}</span>
+        <div className="flex min-w-0 items-center gap-1">
+          {onAttachments && (
+            <button
+              type="button"
+              onClick={() => void pick()}
+              disabled={picking}
+              title="添加图片或文件：也可以直接粘贴截图，或把文件拖进对话"
+              data-attach-button
+              className={cn("flex shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-panel3 hover:text-fg", compact ? "h-7 w-7" : "h-8 w-8")}
+            >
+              {picking ? <LoaderCircle size={14} className="animate-spin" /> : <Paperclip size={compact ? 14 : 15} />}
+            </button>
+          )}
+          <span className="min-w-0 truncate text-[11.5px] text-muted">{hint}</span>
+        </div>
         {running ? (
           <Button size="sm" variant="danger" icon={Square} onClick={onStop}>
             停止
           </Button>
         ) : (
-          <button type="button" disabled={!value.trim()} onClick={onSend} title="发送（Enter）" className={cn("flex shrink-0 items-center justify-center rounded-xl grad-accent text-white transition-opacity disabled:opacity-35", compact ? "h-7 w-7" : "h-8 w-8")}>
+          <button type="button" disabled={!canSend} onClick={onSend} title="发送（Enter）" className={cn("flex shrink-0 items-center justify-center rounded-xl grad-accent text-white transition-opacity disabled:opacity-35", compact ? "h-7 w-7" : "h-8 w-8")}>
             <ArrowUp size={compact ? 15 : 16} />
           </button>
         )}

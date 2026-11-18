@@ -23,7 +23,7 @@ import (
 	"sshpilot/internal/store"
 )
 
-const AppVersion = "1.5.0"
+const AppVersion = "1.6.0"
 
 type ServerStatus struct {
 	Status    string `json:"status"` // online | offline | unknown
@@ -69,9 +69,11 @@ type App struct {
 	// 主窗口用 fileWins 记录已经打开的窗口。
 	filesWindow string
 	parentPID   int
-	forceQuit   atomic.Bool
-	winMu       sync.Mutex
-	fileWins    []*fileWindow
+	// nativeResize 表示窗口的左、右、下三边使用系统的缩放边框（见 winframe_windows.go）。
+	nativeResize bool
+	forceQuit    atomic.Bool
+	winMu        sync.Mutex
+	fileWins     []*fileWindow
 
 	// 启动密码：uiLocked 表示界面被锁住（见 app_lock.go）；bgOnce 保证后台任务只启动一次。
 	uiLocked atomic.Bool
@@ -100,6 +102,8 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// 窗口这时还没有显示：先换上系统的缩放边框，显示出来就是最终的样子
+	a.nativeResize = installResizeBorders()
 	a.dataLoc = currentDataLocation()
 	a.dataDir = a.dataLoc.Dir
 	if a.filesWindow != "" {
@@ -442,6 +446,8 @@ type AppInfo struct {
 	JustMigrated bool   `json:"justMigrated"`
 	// PreviousDataDir 不为空表示这次启动新建了空的数据目录，之前的数据还留在这个目录（程序被移动了，data 文件夹没有跟着移动）。
 	PreviousDataDir string `json:"previousDataDir"`
+	// NativeResize 为 true 时，窗口左、右、下三边的缩放由系统处理，界面只需要处理上边。
+	NativeResize bool `json:"nativeResize"`
 }
 
 func (a *App) GetAppInfo() AppInfo {
@@ -454,6 +460,7 @@ func (a *App) GetAppInfo() AppInfo {
 	info.DataMode, info.BackupDir = loc.Mode, backupDirectory(loc)
 	info.MigratedFrom, info.JustMigrated = migratedFrom(a.dataDir), loc.MigratedFrom != ""
 	info.PreviousDataDir = loc.PreviousDir
+	info.NativeResize = a.nativeResize
 	return info
 }
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,8 +101,27 @@ func anthropicAssistant(m Message) anthropic.BetaMessageParam {
 	return anthropic.BetaMessageParam{Role: anthropic.BetaMessageParamRoleAssistant, Content: content}
 }
 
+// anthropicUser 生成用户消息的内容块：图片在前，文字在后。
+func anthropicUser(m Message, noImages bool) []anthropic.BetaContentBlockParamUnion {
+	text, images := userParts(m, noImages)
+	var blocks []anthropic.BetaContentBlockParamUnion
+	for _, img := range images {
+		blocks = append(blocks, anthropic.NewBetaImageBlock(anthropic.BetaBase64ImageSourceParam{
+			Data:      base64.StdEncoding.EncodeToString(img.Data),
+			MediaType: anthropic.BetaBase64ImageSourceMediaType(img.Mime),
+		}))
+	}
+	if strings.TrimSpace(text) == "" {
+		if len(blocks) > 0 {
+			return blocks
+		}
+		text = "（空消息）"
+	}
+	return append(blocks, anthropic.NewBetaTextBlock(text))
+}
+
 // toAnthropicMessages 把通用消息转换为 Messages API 格式：连续的工具结果合并进同一条 user 消息。
-func toAnthropicMessages(msgs []Message) []anthropic.BetaMessageParam {
+func toAnthropicMessages(msgs []Message, noImages bool) []anthropic.BetaMessageParam {
 	var out []anthropic.BetaMessageParam
 	var pending []anthropic.BetaContentBlockParamUnion
 	flush := func() {
@@ -116,7 +136,7 @@ func toAnthropicMessages(msgs []Message) []anthropic.BetaMessageParam {
 		}
 		switch m.Role {
 		case "user":
-			blocks := append(pending, anthropic.NewBetaTextBlock(m.Content))
+			blocks := append(pending, anthropicUser(m, noImages)...)
 			pending = nil
 			out = append(out, anthropic.NewBetaUserMessage(blocks...))
 		case "assistant":
@@ -153,7 +173,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, req ChatRequest, h StreamH
 		Model:        anthropic.Model(model),
 		MaxTokens:    int64(maxTokens),
 		System:       []anthropic.BetaTextBlockParam{{Text: req.System}},
-		Messages:     toAnthropicMessages(req.Messages),
+		Messages:     toAnthropicMessages(req.Messages, req.NoImages),
 		Tools:        tools,
 		CacheControl: anthropic.NewBetaCacheControlEphemeralParam(),
 	}
@@ -311,5 +331,5 @@ func friendlyAnthropicError(err error) error {
 	default:
 		hint = "调用失败"
 	}
-	return fmt.Errorf("%s（HTTP %d）：%s", hint, apierr.StatusCode, detail)
+	return &APIError{Status: apierr.StatusCode, Msg: fmt.Sprintf("%s（HTTP %d）：%s", hint, apierr.StatusCode, detail)}
 }

@@ -3,6 +3,7 @@
 // 准备：
 //   wails build -tags qa -o QianYeSSHPilot-qa.exe
 //   用一个专门的数据目录启动：set SSHPILOT_DATA_DIR=<测试数据目录>，再运行 build\bin\QianYeSSHPilot-qa.exe
+//   再设置 SSHPILOT_QA_POS=3600,200（物理像素），窗口一开始就出现在这个位置（屏幕外面），而且不抢焦点
 //   程序会把每个窗口的测试端口写到 <测试数据目录>\qa\<main|files>-<进程号>.port
 //
 // 用法（QA_DIR 指向上面的 qa 目录）：

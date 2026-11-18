@@ -28,7 +28,8 @@ export interface AgentState {
   open: (id: string | null) => Promise<void>;
   /** serverId 不为空时，新对话绑定到这台服务器（终端里的「AI 运维」） */
   create: (serverId?: string) => Promise<string | null>;
-  send: (text: string, serverId?: string) => Promise<boolean>;
+  /** attachments 是随消息发送的附件 ID（图片和文件） */
+  send: (text: string, serverId?: string, attachments?: string[]) => Promise<boolean>;
   stop: () => void;
   remove: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
@@ -116,13 +117,13 @@ function createAgentStore(primary: boolean): AgentStore {
       }
     },
 
-    send: async (text, serverId = "") => {
+    send: async (text, serverId = "", attachments = []) => {
       let id = get().currentId;
       if (!id) id = await get().create(serverId);
       if (!id) return false;
       try {
         set({ running: { ...get().running, [id]: true }, live: emptyLive });
-        await api.AgentSend(id, text);
+        await api.AgentSend(id, text, attachments);
         return true;
       } catch (e) {
         set({ running: { ...get().running, [id]: false } });

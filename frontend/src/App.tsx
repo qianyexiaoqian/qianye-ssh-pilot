@@ -3,6 +3,7 @@ import { on, type AgentEvent, type AutoSyncResult, type LockState, type Sample, 
 import { toast, useApp } from "./lib/store";
 import { dispatchAgentEvent, useAgent } from "./lib/agent";
 import { initFileDrop } from "./lib/drop";
+import { initWindowChrome } from "./lib/chrome";
 import { useMonitor } from "./lib/monitor";
 import { useQuick } from "./lib/quick";
 import { useTransfers } from "./lib/files";
@@ -47,6 +48,10 @@ export default function App() {
       window.removeEventListener("storage", onStorage);
     };
   }, [loadInfo, loadLock]);
+
+  useEffect(() => {
+    if (info) initWindowChrome(info.nativeResize);
+  }, [info]);
 
   // 先确定当前窗口是主窗口还是某台服务器的文件管理窗口，再渲染对应的界面
   if (!info || !lock) return <div className="h-full bg-bg" />;
@@ -118,7 +123,7 @@ function MainApp() {
     void loadRoutes();
     void useAgent.getState().loadSessions();
     void useQuick.getState().load();
-    initFileDrop(() => toast.info("文件要拖到文件管理窗口里", "在终端工具栏点「文件」，或从侧栏的「文件管理」打开服务器的文件管理窗口，把文件或文件夹拖进去就能上传。"));
+    initFileDrop(() => toast.info("文件可以拖到这两个地方", "拖进 AI 助手的对话里，交给 AI 处理（阅读、传到服务器上部署）；或者打开服务器的文件管理窗口（终端工具栏的「文件」），拖进去直接上传。"));
     const offs = [
       on<Record<string, ServerStatus>>("servers:status", (s) => setStatus(s ?? {})),
       // 连上服务器后识别出了系统名称等

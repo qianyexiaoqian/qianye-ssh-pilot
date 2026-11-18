@@ -7,7 +7,9 @@ require (
 	github.com/pkg/sftp v1.13.12
 	github.com/wailsapp/wails/v2 v2.17.1
 	golang.org/x/crypto v0.59.0
+	golang.org/x/image v0.41.0
 	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -55,5 +57,4 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/text v0.44.0 // indirect
 )

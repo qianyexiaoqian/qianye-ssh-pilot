@@ -47,7 +47,7 @@ func main() {
 		MinHeight:        minWindowHeight,
 		Frameless:        true,
 		BackgroundColour: &options.RGBA{R: 10, G: 11, B: 16, A: 255},
-		AssetServer:      &assetserver.Options{Assets: assets},
+		AssetServer:      &assetserver.Options{Assets: assets, Handler: app.assetHandler()},
 		OnStartup:        app.startup,
 		OnDomReady:       app.domReady,
 		OnShutdown:       app.shutdown,

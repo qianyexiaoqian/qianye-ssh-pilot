@@ -112,6 +112,10 @@ func TestDemoEnvironment(t *testing.T) {
 	}
 	// 本地模拟一个 OpenAI 兼容模型，按对话进度返回预设的工具调用，用于验收 AI 助手界面
 	mock := startMockModel(t)
+	// 对假模型说“把 api.example.org 的证书部署到 db-01”：它会添加一个部署目标并部署
+	mockTargetArgs = `{"certificate":"api.example.org","server":"db-01","cert_path":"` + base + `/ai/fullchain.pem","key_path":"` + base + `/ai/privkey.pem","test_command":"true","services":[],"deploy":true}`
+	// 假模型把用户发来的文件传到 web-01 主目录下的 uploads 文件夹
+	mockUploadDir = "/" + strings.TrimPrefix(filepath.ToSlash(web.Home), "/") + "/uploads/"
 	settings := a.settings()
 	settings.AI.Provider, settings.AI.Preset, settings.AI.BaseURL, settings.AI.Model = "openai", "custom", mock+"/v1", "mock-ops"
 	// 向量模型也指向本地的模拟接口

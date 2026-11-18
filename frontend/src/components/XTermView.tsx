@@ -354,7 +354,7 @@ export function XTermView({ tab, active }: { tab: TermTab; active: boolean }) {
         patchTerm(tab.key, { state: "open", termId: id, message: undefined });
         // 订阅完成后通知后端开始推送（期间的输出已在后端缓存）
         api.TerminalReady(id);
-        api.TerminalResize(id, term.cols, term.rows);
+        syncSize(term.cols, term.rows);
         term.focus();
       })
       .catch((e: unknown) => {
@@ -365,28 +365,54 @@ export function XTermView({ tab, active }: { tab: TermTab; active: boolean }) {
     const dataDisp = term.onData((d) => {
       if (idRef.current) api.TerminalWrite(idRef.current, d);
     });
-    const resizeDisp = term.onResize(({ cols, rows }) => {
-      if (idRef.current) api.TerminalResize(idRef.current, cols, rows);
-    });
-    let raf = 0;
-    const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        if (host.offsetWidth > 0 && host.offsetHeight > 0) {
+    // 把终端的行列数告诉服务器。调用是异步的，连续变化时后发的可能先到，服务器上的 Shell 就会按过时的宽度折行；
+    // 所以排队逐个发送，队列里只留最新的一个。
+    let wanted: { cols: number; rows: number } | null = null;
+    let sending = false;
+    const syncSize = (cols: number, rows: number) => {
+      wanted = { cols, rows };
+      if (sending) return;
+      sending = true;
+      void (async () => {
+        while (wanted && idRef.current && !disposed) {
+          const size = wanted;
+          wanted = null;
           try {
-            fit.fit();
+            await api.TerminalResize(idRef.current, size.cols, size.rows);
           } catch {
-            /* ignore */
+            /* 终端已经关闭 */
           }
         }
-      });
+        sending = false;
+      })();
+    };
+    const resizeDisp = term.onResize(({ cols, rows }) => syncSize(cols, rows));
+    // 容器大小变化时重新排版。拖动分隔条或窗口边框会连续触发：每变一次，终端要重排一次已有的内容，
+    // Shell 也要重画一次命令行，中间状态叠在一起就会错位。所以单独的一次变化（开关侧边面板、最大化）稍等一下就处理，连续变化等停下来再处理。
+    let fitTimer = 0;
+    let lastChange = 0;
+    const fitNow = () => {
+      if (host.offsetWidth > 0 && host.offsetHeight > 0) {
+        try {
+          fit.fit();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    const ro = new ResizeObserver(() => {
+      const now = performance.now();
+      const busy = now - lastChange < 150;
+      lastChange = now;
+      clearTimeout(fitTimer);
+      fitTimer = window.setTimeout(fitNow, busy ? 100 : 40);
     });
     ro.observe(host);
 
     return () => {
       disposed = true;
       ro.disconnect();
-      cancelAnimationFrame(raf);
+      clearTimeout(fitTimer);
       host.removeEventListener("contextmenu", onContext);
       offs.forEach((f) => f());
       dataDisp.dispose();

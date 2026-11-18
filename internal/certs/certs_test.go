@@ -193,6 +193,33 @@ func TestDeployBackupVerifyAndRollback(t *testing.T) {
 	if err != nil || len(found) != 0 {
 		t.Fatalf("discover: %+v %v", found, err)
 	}
+
+	// XBoard 节点：从 config.yml 的 cert_file / key_file 里读出证书路径（带引号、带注释、写在列表项里都认识）
+	cfg := dir + "/xboard-node/config.yml"
+	yml := "panel:\n  url: \"https://panel.example.com\"\n  node_id: 1\ncert:\n  cert_mode: file\n" +
+		"  cert_file: \"" + target.CertPath + "\"   # 站点证书\n  key_file: '" + target.KeyPath + "'\n" +
+		"instances:\n  - cert_file: " + combined.CertPath + "\n    key_file: " + combined.CertPath + "\n" +
+		"  - cert_file: certs/missing.pem\n# cert_file: /commented/out.pem\n"
+	if err := pool.WriteFile(ctx, "s1", cfg, []byte(yml), "600", ""); err != nil {
+		t.Fatal(err)
+	}
+	old := certs.XboardConfigs
+	certs.XboardConfigs = []string{dir + "/xboard-node/absent.yml", cfg}
+	defer func() { certs.XboardConfigs = old }()
+	found, err = certs.Discover(ctx, pool, "s1")
+	if err != nil || len(found) != 3 {
+		t.Fatalf("discover xboard: %+v %v", found, err)
+	}
+	if d := found[0]; d.Source != "xboard" || d.CertPath != target.CertPath || d.KeyPath != target.KeyPath || d.Fingerprint != p2.Fingerprint || d.Error != "" {
+		t.Errorf("xboard cert: %+v", d)
+	}
+	if d := found[1]; d.Source != "xboard" || d.CertPath != combined.CertPath || d.KeyPath != combined.CertPath {
+		t.Errorf("xboard instance cert: %+v", d)
+	}
+	// 相对路径按配置文件所在的目录解析；文件不存在时说明读不到，而不是丢掉这一条
+	if d := found[2]; d.CertPath != "/etc/xboard-node/certs/missing.pem" || d.KeyPath != "" || d.Error == "" {
+		t.Errorf("relative path: %+v", d)
+	}
 }
 
 func stepMsg(r certs.DeployResult, step string) string {

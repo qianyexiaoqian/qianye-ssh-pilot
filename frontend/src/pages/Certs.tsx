@@ -372,7 +372,7 @@ function CertDetail({ cert, reload, onReplace }: { cert: CertView; reload: () =>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[13.5px] font-semibold">{t.serverName || "（服务器已删除）"}</span>
                       <span className="font-mono text-[11.5px] text-muted">{t.serverHost}</span>
-                      <Badge tone="accent">{{ nginx: "Nginx", apache: "Apache", haproxy: "HAProxy" }[t.preset] ?? "自定义"}</Badge>
+                      <Badge tone="accent">{presetLabel[t.preset as Preset] ?? "自定义"}</Badge>
                       <Badge tone={meta.tone} icon={meta.Icon}>
                         {meta.label}
                       </Badge>
@@ -682,17 +682,25 @@ function ImportCertModal({ open, replace, onClose, onSaved }: { open: boolean; r
 
 // ---- 部署目标 ----
 
-type Preset = "nginx" | "apache" | "haproxy" | "custom";
+type Preset = "nginx" | "apache" | "haproxy" | "xboard" | "custom";
 
+const presetLabel: Record<Preset, string> = { nginx: "Nginx", apache: "Apache", haproxy: "HAProxy", xboard: "XBoard 节点", custom: "自定义" };
+const presetNote: Record<Preset, string> = { nginx: "reload nginx", apache: "reload apache2", haproxy: "合并 PEM", xboard: "restart xboard-node", custom: "手动配置" };
+
+// 各个预设的常用路径和部署后的操作。AI 添加部署目标时用的是同一组预设（agent_certs.go 的 targetPresets），两边要保持一致。
 function presetValues(preset: Preset, domain: string) {
   const d = (domain || "site").replace("*.", "wildcard.");
   switch (preset) {
     case "nginx":
-      return { certPath: `/etc/nginx/ssl/${d}.crt`, keyPath: `/etc/nginx/ssl/${d}.key`, chainPath: "", certFormat: "fullchain", testCommand: "nginx -t", services: ["nginx"], serviceAction: "reload" };
+      return { certPath: `/etc/nginx/ssl/${d}.crt`, keyPath: `/etc/nginx/ssl/${d}.key`, chainPath: "", certFormat: "fullchain", testCommand: "nginx -t", services: ["nginx"], serviceAction: "reload", verifyPort: 443 };
     case "apache":
-      return { certPath: `/etc/ssl/certs/${d}.crt`, keyPath: `/etc/ssl/private/${d}.key`, chainPath: "", certFormat: "fullchain", testCommand: "apachectl configtest", services: ["apache2"], serviceAction: "reload" };
+      return { certPath: `/etc/ssl/certs/${d}.crt`, keyPath: `/etc/ssl/private/${d}.key`, chainPath: "", certFormat: "fullchain", testCommand: "apachectl configtest", services: ["apache2"], serviceAction: "reload", verifyPort: 443 };
     case "haproxy":
-      return { certPath: `/etc/haproxy/certs/${d}.pem`, keyPath: "", chainPath: "", certFormat: "combined", testCommand: "haproxy -c -f /etc/haproxy/haproxy.cfg", services: ["haproxy"], serviceAction: "reload" };
+      return { certPath: `/etc/haproxy/certs/${d}.pem`, keyPath: "", chainPath: "", certFormat: "combined", testCommand: "haproxy -c -f /etc/haproxy/haproxy.cfg", services: ["haproxy"], serviceAction: "reload", verifyPort: 443 };
+    case "xboard":
+      // xboard-node 没有 reload，换证书后要重启；证书放在哪里由节点 config.yml 里的 cert_file / key_file 决定，这里给的只是常见的位置。
+      // 节点监听的端口各不相同，默认不做线上验证
+      return { certPath: "/etc/xboard-node/fullchain.pem", keyPath: "/etc/xboard-node/privkey.pem", chainPath: "", certFormat: "fullchain", testCommand: "", services: ["xboard-node"], serviceAction: "restart", verifyPort: 0 };
     default:
       return { certPath: "", keyPath: "", chainPath: "", certFormat: "fullchain", testCommand: "", services: [] as string[], serviceAction: "none" };
   }
@@ -763,17 +771,17 @@ function TargetModal({ open, cert, target, onClose, onSaved }: { open: boolean; 
           <Field label="服务器" required>
             <ServerPicker single value={t.serverId ? [t.serverId] : []} onChange={(v) => set({ serverId: v[0] ?? "" })} maxHeight={150} />
           </Field>
-          <Field label="预设" hint="选择后自动填写常用路径与命令，可再修改">
+          <Field label="预设" hint={t.preset === "xboard" ? "证书路径要和节点 config.yml 里的 cert_file / key_file 一致；不确定时用「扫描服务器」自动读取" : "选择后自动填写常用路径与命令，可再修改"}>
             <div className="grid grid-cols-2 gap-2">
-              {(["nginx", "apache", "haproxy", "custom"] as Preset[]).map((p) => (
+              {(["nginx", "apache", "haproxy", "xboard", "custom"] as Preset[]).map((p) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => set({ preset: p, ...presetValues(p, domain) })}
-                  className={cn("h-14 rounded-xl border text-[13px] font-medium transition-colors", t.preset === p ? "border-accent/60 bg-accent/10 text-fg" : "border-line2 text-fg2 hover:bg-panel2")}
+                  className={cn("h-14 rounded-xl border text-[13px] font-medium transition-colors", p === "custom" && "col-span-2", t.preset === p ? "border-accent/60 bg-accent/10 text-fg" : "border-line2 text-fg2 hover:bg-panel2")}
                 >
-                  {{ nginx: "Nginx", apache: "Apache", haproxy: "HAProxy", custom: "自定义" }[p]}
-                  <div className="text-[11px] font-normal text-muted">{{ nginx: "reload nginx", apache: "reload apache2", haproxy: "合并 PEM", custom: "手动配置" }[p]}</div>
+                  {presetLabel[p]}
+                  <div className="truncate px-1 text-[11px] font-normal text-muted">{presetNote[p]}</div>
                 </button>
               ))}
             </div>
@@ -986,7 +994,7 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
     }
   };
   const addTarget = async (d: DiscoveredView) => {
-    const preset: Preset = d.source === "nginx" ? "nginx" : d.source === "apache" ? "apache" : d.source === "haproxy" ? "haproxy" : "custom";
+    const preset: Preset = d.source === "nginx" || d.source === "apache" || d.source === "haproxy" || d.source === "xboard" ? d.source : "custom";
     const base = presetValues(preset, cert.domains[0] ?? "");
     try {
       await api.SaveTarget({
@@ -1003,7 +1011,7 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
         owner: "",
         backup: true,
         postCommand: "",
-        verifyPort: 443,
+        verifyPort: preset === "xboard" ? 0 : 443,
         verifyDomain: "",
       });
       toast.ok("已添加部署目标", d.certPath);
@@ -1014,7 +1022,7 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
     }
   };
   return (
-    <Modal open={open} onClose={onClose} title="扫描服务器上的证书" icon={Radar} size="xl" description="读取 nginx -T、Apache、HAProxy 配置与 /etc/letsencrypt/live，找出正在使用的证书文件">
+    <Modal open={open} onClose={onClose} title="扫描服务器上的证书" icon={Radar} size="xl" description="读取 nginx -T、Apache、HAProxy、XBoard 节点（xboard-node）的配置与 /etc/letsencrypt/live，找出正在使用的证书文件">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[280px_1fr]">
         <div className="space-y-3">
           <ServerPicker single value={server} onChange={setServer} maxHeight={300} />
@@ -1026,13 +1034,13 @@ function DiscoverModal({ open, cert, onClose, onChanged }: { open: boolean; cert
           {found === null ? (
             <div className="flex h-full items-center justify-center text-[12.5px] text-muted">{busy ? <Spinner /> : "选择服务器后开始扫描"}</div>
           ) : found.length === 0 ? (
-            <Empty icon={Search} title="没有发现证书配置" description="该服务器上没有找到 Nginx / Apache / HAProxy 的证书配置。可以手动添加部署目标。" />
+            <Empty icon={Search} title="没有发现证书配置" description="该服务器上没有找到 Nginx / Apache / HAProxy / XBoard 节点的证书配置。可以手动添加部署目标。" />
           ) : (
             <div className="space-y-2">
               {found.map((d) => (
                 <div key={d.certPath} className="rounded-xl border border-line2 bg-bg2/50 p-3">
                   <div className="flex items-center gap-2">
-                    <Badge tone="accent">{d.source}</Badge>
+                    <Badge tone="accent">{presetLabel[d.source as Preset] ?? d.source}</Badge>
                     <span className="truncate font-mono text-[12px] text-fg">{d.certPath}</span>
                   </div>
                   {d.keyPath && d.keyPath !== d.certPath && <div className="mt-1 truncate font-mono text-[11.5px] text-muted">私钥 {d.keyPath}</div>}

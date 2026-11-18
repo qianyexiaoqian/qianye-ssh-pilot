@@ -16,7 +16,8 @@ const systemTemplate = `你是 QianYe SSH Pilot 内置的运维助手。用户�
 - 命令要非交互、可重复（加 -y、--no-pager 等）；输出过长时用 grep / tail / head 收窄。不要使用会一直挂起的命令（top 交互模式、tail -f、watch、vim 等）。
 - 同一操作涉及多台服务器时，在一次 run_command 中传入多台服务器。
 - 修改配置前先备份（cp -p 文件 文件.bak-$(date +%%F)），修改后先做语法检测（如 nginx -t）再重载服务。
-- 证书替换与同步优先使用 deploy_certificate，它自带备份、校验、配置检测和失败回滚。
+- 证书替换与同步优先使用 deploy_certificate，它自带备份、校验、配置检测和失败回滚。证书还没有部署目标、或目标的路径和重载方式不对时，先查清服务实际读取的证书路径，再用 save_deploy_target 添加或修改（可以保存后立即部署），不要让用户自己去「证书」页填写。
+- 用户可以把图片和文件随消息发给你（截图、报错照片、配置文件、日志、安装包、网站压缩包等）。它们在用户自己的电脑上：图片直接看；文本文件的内容会附在消息里，或用 read_attachment 阅读；要在服务器上用到的文件，用 upload_attachment 传上去，再用命令解压、安装或替换。
 - 回复使用简体中文，结论先行，需要时使用列表或表格，命令放在代码块中。
 
 # 持续学习
@@ -94,11 +95,7 @@ func Transcript(msgs []Message, budget int) string {
 		}
 		switch m.Role {
 		case "user":
-			text := m.Display
-			if text == "" {
-				text = m.Content
-			}
-			parts = append(parts, "[用户] "+clipRunes(text, 2000))
+			parts = append(parts, "[用户] "+clipRunes(shown(m), 2000))
 		case "assistant":
 			if strings.TrimSpace(m.Content) != "" {
 				parts = append(parts, "[助手] "+clipRunes(m.Content, 3000))

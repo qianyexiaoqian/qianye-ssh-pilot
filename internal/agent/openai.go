@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,11 @@ func (p *openaiProvider) Name() string { return "openai" }
 
 func msgSize(m Message) int {
 	n := len(m.Content) + 64
+	for _, att := range m.Attachments {
+		if len(att.Data) > 0 {
+			n += 4000 // 一张图片大致相当于这么多文字
+		}
+	}
 	for _, c := range m.ToolCalls {
 		n += len(c.Arguments) + len(c.Name)
 	}
@@ -87,11 +93,7 @@ func digestTurns(msgs []Message) string {
 		}
 		switch m.Role {
 		case "user":
-			q := m.Display
-			if q == "" {
-				q = m.Content
-			}
-			turns = append(turns, turn{q: q})
+			turns = append(turns, turn{q: shown(m)})
 		case "assistant":
 			if len(turns) > 0 && strings.TrimSpace(m.Content) != "" {
 				turns[len(turns)-1].a = m.Content
@@ -112,7 +114,24 @@ func digestTurns(msgs []Message) string {
 	return b.String()
 }
 
-func toOpenAIMessages(system string, msgs []Message) []map[string]any {
+// openaiUser 生成用户消息的 content：没有图片时是字符串，有图片时是「文字 + 图片」的数组。
+func openaiUser(m Message, noImages bool) any {
+	text, images := userParts(m, noImages)
+	if len(images) == 0 {
+		return text
+	}
+	var parts []map[string]any
+	if strings.TrimSpace(text) != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": text})
+	}
+	for _, img := range images {
+		url := "data:" + img.Mime + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+	}
+	return parts
+}
+
+func toOpenAIMessages(system string, msgs []Message, noImages bool) []map[string]any {
 	out := []map[string]any{{"role": "system", "content": system}}
 	for _, m := range msgs {
 		if m.Kind == "notice" {
@@ -120,7 +139,7 @@ func toOpenAIMessages(system string, msgs []Message) []map[string]any {
 		}
 		switch m.Role {
 		case "user":
-			out = append(out, map[string]any{"role": "user", "content": m.Content})
+			out = append(out, map[string]any{"role": "user", "content": openaiUser(m, noImages)})
 		case "assistant":
 			item := map[string]any{"role": "assistant"}
 			if r := reasoningOf(m); r != "" {
@@ -197,7 +216,7 @@ func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest, h StreamHand
 	msgs := trimForContext(req.Messages, p.cfg.ContextChars)
 	body := map[string]any{
 		"model":    p.cfg.Model,
-		"messages": toOpenAIMessages(req.System, msgs),
+		"messages": toOpenAIMessages(req.System, msgs, req.NoImages),
 		"stream":   true,
 	}
 	if len(req.Tools) > 0 {
@@ -236,7 +255,7 @@ func (p *openaiProvider) Chat(ctx context.Context, req ChatRequest, h StreamHand
 		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(raw), "reasoning_content") {
 			hint = "（这个对话里有其他模型留下的记录，当前模型无法接着处理，请新建一个对话）"
 		}
-		return nil, fmt.Errorf("模型接口返回 HTTP %d：%s%s", resp.StatusCode, apiErrorMessage(string(raw)), hint)
+		return nil, &APIError{Status: resp.StatusCode, Msg: fmt.Sprintf("模型接口返回 HTTP %d：%s%s", resp.StatusCode, apiErrorMessage(string(raw)), hint)}
 	}
 
 	out := Message{Role: "assistant", Provider: "openai", Model: p.cfg.Model}
